@@ -1,0 +1,13 @@
+data/
+__pycache__/
+*.pyc
+.pytest_cache/
+.buildozer/
+bin/
+*.apk
+*.aab
+_apk_*/
+_apk_libs/
+*.log
+_logcat*.txt
+_rebuild_pid.txt

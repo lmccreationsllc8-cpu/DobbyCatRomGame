@@ -1,0 +1,72 @@
+"""DobbyCatRomGame entry — Booth Blaster prototype."""
+
+from __future__ import annotations
+
+import sys
+
+import pygame
+
+import config
+from core import audio
+from core.input import InputManager
+from core.platform import apply_android_runtime_tweaks, create_display
+from games.booth_blaster import LoadingScene
+
+
+def main() -> int:
+    pygame.init()
+    apply_android_runtime_tweaks()
+    audio.init()
+    pygame.display.set_caption(config.TITLE)
+
+    screen = create_display((config.WIDTH, config.HEIGHT))
+    canvas = pygame.Surface((config.WIDTH, config.HEIGHT))
+
+    clock = pygame.time.Clock()
+    inputs = InputManager()
+    scene: object = LoadingScene()
+    running = True
+    elapsed = 0.0
+
+    while running:
+        dt = clock.tick(config.FPS) / 1000.0
+        elapsed += dt
+
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+                break
+            inputs.handle_device_event(event)
+            if hasattr(scene, "handle_event"):
+                scene.handle_event(event)  # type: ignore[union-attr]
+
+        if not running:
+            break
+
+        inp = inputs.poll(dt)
+        next_scene = scene.update(dt, inp)  # type: ignore[union-attr]
+
+        if getattr(scene, "exit_requested", False):
+            running = False
+            break
+
+        if next_scene is not None and next_scene is not scene:
+            scene = next_scene
+
+        scene.draw(canvas)  # type: ignore[union-attr]
+        if screen.get_size() != canvas.get_size():
+            pygame.transform.smoothscale(canvas, screen.get_size(), screen)
+        else:
+            screen.blit(canvas, (0, 0))
+        pygame.display.flip()
+
+        if config.SMOKE_SECONDS > 0 and elapsed >= config.SMOKE_SECONDS:
+            running = False
+
+    audio.shutdown()
+    pygame.quit()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
