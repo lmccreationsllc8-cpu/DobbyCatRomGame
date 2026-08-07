@@ -1,4 +1,4 @@
-"""Local high-score leaderboard (JSON on disk).
+"""Local high-score leaderboard (JSON on disk or browser localStorage).
 
 DBY is always first place. Display score is min(999, 3 × highest real score),
 or 999 when there are no real scores yet. Only human scores are persisted.
@@ -11,11 +11,12 @@ from dataclasses import asdict, dataclass
 from typing import Any
 
 from config import MAX_ENTRIES
-import config
+from core import storage
 
 DBY_NAME = "DBY"
 DBY_SCORE_CAP = 999
 RESERVED_NAMES = frozenset({DBY_NAME})
+_STORE_NAME = "leaderboard.json"
 
 
 @dataclass
@@ -23,10 +24,6 @@ class ScoreEntry:
     name: str
     score: int
     wave: int
-
-
-def _ensure_parent() -> None:
-    config.LEADERBOARD_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 
 def _parse_entries(raw: Any) -> list[ScoreEntry]:
@@ -50,11 +47,12 @@ def _parse_entries(raw: Any) -> list[ScoreEntry]:
 
 
 def _load_real_scores() -> list[ScoreEntry]:
-    if not config.LEADERBOARD_PATH.is_file():
+    text = storage.read_text(_STORE_NAME)
+    if not text:
         return []
     try:
-        raw: Any = json.loads(config.LEADERBOARD_PATH.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+        raw: Any = json.loads(text)
+    except json.JSONDecodeError:
         return []
     return _parse_entries(raw)
 
@@ -82,12 +80,11 @@ def load_scores() -> list[ScoreEntry]:
 
 def save_scores(entries: list[ScoreEntry]) -> None:
     """Persist human scores only (DBY is synthetic)."""
-    _ensure_parent()
     real = [e for e in entries if e.name not in RESERVED_NAMES]
     real.sort(key=lambda e: (-e.score, -e.wave))
     real = real[: max(0, MAX_ENTRIES - 1)]
     payload = [asdict(e) for e in real]
-    config.LEADERBOARD_PATH.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    storage.write_text(_STORE_NAME, json.dumps(payload, indent=2))
 
 
 def qualifies(score: int) -> bool:

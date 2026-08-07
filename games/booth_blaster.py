@@ -55,8 +55,21 @@ ENEMY_STATS = {
 def _knockout_light_bg(surf: pygame.Surface) -> pygame.Surface:
     """Safety net for leftover white studio plates. Prefers pre-cleaned RGBA assets."""
     out = surf.convert_alpha()
+    # Avoid packaging numpy for the web build (pygbag scans imports).
     try:
-        import numpy as np
+        from core.platform import is_web
+
+        if is_web():
+            return out
+    except Exception:
+        pass
+    try:
+        import importlib
+        import sys
+
+        if sys.platform == "emscripten":
+            return out
+        np = importlib.import_module("numpy")
 
         rgb = pygame.surfarray.pixels3d(out)
         alpha = pygame.surfarray.pixels_alpha(out)

@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass
-from pathlib import Path
 from typing import Any
 
-from core.platform import writable_data_dir
+from core import storage
+
+_STORE_NAME = "audio_settings.json"
 
 
 @dataclass
@@ -17,17 +18,13 @@ class AudioSettings:
     sfx_volume: float = 0.55
 
 
-def _path() -> Path:
-    return writable_data_dir() / "audio_settings.json"
-
-
 def load_audio_settings() -> AudioSettings:
-    path = _path()
-    if not path.is_file():
+    text = storage.read_text(_STORE_NAME)
+    if not text:
         return AudioSettings()
     try:
-        raw: Any = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+        raw: Any = json.loads(text)
+    except json.JSONDecodeError:
         return AudioSettings()
     if not isinstance(raw, dict):
         return AudioSettings()
@@ -45,6 +42,4 @@ def load_audio_settings() -> AudioSettings:
 
 
 def save_audio_settings(settings: AudioSettings) -> None:
-    path = _path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(asdict(settings), indent=2), encoding="utf-8")
+    storage.write_text(_STORE_NAME, json.dumps(asdict(settings), indent=2))

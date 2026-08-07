@@ -1,8 +1,9 @@
-"""Android / desktop runtime helpers for Booth Blaster."""
+"""Android / desktop / web runtime helpers for Booth Blaster."""
 
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 import pygame
@@ -17,8 +18,15 @@ FONT_CANDIDATES = (
 )
 
 
+def is_web() -> bool:
+    """True when running under pygbag / pygame-wasm (browser)."""
+    return sys.platform == "emscripten"
+
+
 def is_android() -> bool:
     """True when running under python-for-android / Buildozer."""
+    if is_web():
+        return False
     if os.environ.get("ANDROID_ARGUMENT") is not None:
         return True
     if os.environ.get("ANDROID_PRIVATE") is not None:
@@ -31,6 +39,11 @@ def is_android() -> bool:
         return True
     except Exception:
         return False
+
+
+def is_mobile_runtime() -> bool:
+    """Phone-oriented runtime (Android APK or browser on phone/tablet)."""
+    return is_android() or is_web()
 
 
 def writable_data_dir() -> Path:
@@ -56,7 +69,10 @@ def writable_data_dir() -> Path:
         except OSError:
             pass
     path = config.ROOT / "data"
-    path.mkdir(parents=True, exist_ok=True)
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass
     return path
 
 
@@ -65,7 +81,25 @@ def leaderboard_path() -> Path:
 
 
 def apply_android_runtime_tweaks() -> None:
-    """Adjust config for phone (idle timeout, fullscreen). Call before main loop."""
+    """Back-compat alias for apply_mobile_runtime_tweaks()."""
+    apply_mobile_runtime_tweaks()
+
+
+def apply_mobile_runtime_tweaks() -> None:
+    """Adjust config for phone/web (idle timeout, display). Call before main loop."""
+    if is_web():
+        # Arcade idle quit is wrong in a browser tab.
+        config.IDLE_QUIT_SECONDS = 86_400.0
+        config.FULLSCREEN = False
+        config.LEADERBOARD_PATH = leaderboard_path()
+        try:
+            import platform as _plat
+
+            # Keep chunky pixel look when the canvas is CSS-scaled.
+            _plat.window.canvas.style.imageRendering = "pixelated"
+        except Exception:
+            pass
+        return
     if not is_android():
         return
     # Arcade 90s idle quit is wrong on a phone — effectively disable.
@@ -76,7 +110,9 @@ def apply_android_runtime_tweaks() -> None:
 
 def mixer_buffer() -> int:
     """Larger buffer is more stable on Android Bluetooth / weak devices."""
-    return 2048 if is_android() else 512
+    if is_web() or is_android():
+        return 2048
+    return 512
 
 
 def load_font(size: int, bold: bool = False) -> pygame.font.Font:
@@ -141,8 +177,11 @@ def _set_mode_fullscreen(size: tuple[int, int], display: int) -> pygame.Surface:
 
 
 def create_display(logical_size: tuple[int, int]) -> pygame.Surface:
-    """Fullscreen on Android/Pi stage TV; windowed/scaled on desktop."""
+    """Fullscreen on Android/Pi stage TV; logical canvas on web; scaled on desktop."""
     width, height = logical_size
+    if is_web():
+        # Browser canvas is CSS-scaled by the pygbag template; keep native logical size.
+        return pygame.display.set_mode(logical_size)
     if is_android() or config.FULLSCREEN:
         display = _fullscreen_display_index()
         # Prefer that monitor's native size (Info() alone is often the primary/touch bar).

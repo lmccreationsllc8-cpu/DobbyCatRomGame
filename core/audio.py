@@ -8,6 +8,7 @@ from typing import Optional
 import pygame
 
 import config
+from core.platform import is_web
 from core.settings import AudioSettings, load_audio_settings, save_audio_settings
 
 _initialized = False
@@ -37,6 +38,21 @@ MUSIC_FILES = {
     "boss": "music_boss.wav",
 }
 
+
+def _resolve_audio_file(filename: str) -> Optional[Path]:
+    """Prefer OGG on web (Safari/WASM); fall back to the configured name."""
+    audio_dir: Path = config.AUDIO_DIR
+    stem = Path(filename).stem
+    candidates: list[Path]
+    if is_web():
+        candidates = [audio_dir / f"{stem}.ogg", audio_dir / filename]
+    else:
+        candidates = [audio_dir / filename, audio_dir / f"{stem}.ogg"]
+    for path in candidates:
+        if path.is_file():
+            return path
+    return None
+
 # Defaults kept for import compatibility with older call sites.
 MUSIC_VOLUME = 0.42
 SFX_VOLUME = 0.55
@@ -58,10 +74,9 @@ def init() -> None:
         _initialized = True
         return
 
-    audio_dir: Path = config.AUDIO_DIR
     for key, filename in SFX_FILES.items():
-        path = audio_dir / filename
-        if not path.is_file():
+        path = _resolve_audio_file(filename)
+        if path is None:
             continue
         try:
             sound = pygame.mixer.Sound(str(path))
@@ -217,8 +232,8 @@ def play_music(name: str, loop: bool = True) -> None:
     filename = MUSIC_FILES.get(name)
     if not filename:
         return
-    path = config.AUDIO_DIR / filename
-    if not path.is_file():
+    path = _resolve_audio_file(filename)
+    if path is None:
         return
     if _music_current == name and pygame.mixer.music.get_busy():
         _apply_volumes()

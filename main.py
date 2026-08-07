@@ -1,21 +1,25 @@
-"""DobbyCatRomGame entry — Booth Blaster prototype."""
+"""DobbyCatRomGame entry — Booth Blaster prototype.
+
+Desktop: ``python main.py``
+Web (pygbag): async loop with ``await asyncio.sleep(0)`` each frame.
+"""
 
 from __future__ import annotations
 
-import sys
+import asyncio
 
 import pygame
 
 import config
 from core import audio
 from core.input import InputManager
-from core.platform import apply_android_runtime_tweaks, create_display
+from core.platform import apply_mobile_runtime_tweaks, create_display, is_web
 from games.booth_blaster import LoadingScene
 
 
-def main() -> int:
+async def main() -> None:
     pygame.init()
-    apply_android_runtime_tweaks()
+    apply_mobile_runtime_tweaks()
     audio.init()
     pygame.display.set_caption(config.TITLE)
 
@@ -63,10 +67,13 @@ def main() -> int:
         if config.SMOKE_SECONDS > 0 and elapsed >= config.SMOKE_SECONDS:
             running = False
 
-    audio.shutdown()
-    pygame.quit()
-    return 0
+        # Required for pygbag / browser: yield to the event loop each frame.
+        await asyncio.sleep(0)
+
+    if not is_web():
+        audio.shutdown()
+        pygame.quit()
 
 
-if __name__ == "__main__":
-    sys.exit(main())
+# On pygame-wasm, asyncio.run is non-blocking — do not exit or quit after this.
+asyncio.run(main())

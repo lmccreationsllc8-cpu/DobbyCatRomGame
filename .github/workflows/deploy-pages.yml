@@ -1,0 +1,78 @@
+name: Deploy web build to GitHub Pages
+
+on:
+  push:
+    branches: [master, main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install pygbag
+        run: python -m pip install --upgrade pip pygbag
+
+      - name: Stage slim web package
+        run: |
+          set -euo pipefail
+          rm -rf web_src
+          mkdir -p web_src/assets/audio web_src/assets/fonts web_src/assets/sprites
+          mkdir -p web_src/core web_src/games
+          cp main.py config.py web_src/
+          cp core/*.py web_src/core/
+          cp games/*.py web_src/games/
+          # Web prefers OGG; skip large WAVs to keep the download small.
+          cp assets/audio/*.ogg web_src/assets/audio/
+          cp assets/fonts/*.ttf web_src/assets/fonts/
+          cp assets/sprites/*.png web_src/assets/sprites/
+          if [ -f assets/icon.png ]; then
+            cp assets/icon.png web_src/favicon.png
+            cp assets/icon.png web_src/assets/icon.png
+          fi
+          # Empty data dir placeholder (leaderboard uses localStorage in browser).
+          mkdir -p web_src/data
+          printf '[]\n' > web_src/data/leaderboard.json
+          ls -la web_src
+          du -sh web_src
+
+      - name: Build with pygbag
+        run: |
+          set -euo pipefail
+          # Parent-of-folder invocation; --build skips the local test server.
+          # --ume_block 0 helps mobile Safari (no forced media-engagement gate).
+          python -m pygbag \
+            --build \
+            --ume_block 0 \
+            --title "Booth Blaster" \
+            --app_name "booth_blaster" \
+            --package "org.dobbycat.boothblaster" \
+            --icon web_src/favicon.png \
+            web_src
+          # GitHub Pages should not run Jekyll on underscore paths.
+          touch web_src/build/web/.nojekyll
+          ls -la web_src/build/web
+
+      - name: Deploy to gh-pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./web_src/build/web
+          publish_branch: gh-pages
+          force_orphan: true
