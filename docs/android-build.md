@@ -2,6 +2,14 @@
 
 Build a sideloadable **debug APK** with **Buildozer** inside **WSL2 Ubuntu**. Buildozer / python-for-android do not run natively on Windows.
 
+The current build configuration is:
+
+- App version: `0.1.10`
+- Target API: Android 35; minimum API: Android 24
+- ABI: `arm64-v8a`
+- NDK: r28b, with `p4a.branch = develop`, for 16 KB page-size support
+- Runtime: Python 3.11.11 and the local `pygame-ce` recipe
+
 ## Prerequisites (Windows host)
 
 1. Enable WSL2 and install Ubuntu:
@@ -39,6 +47,8 @@ Prefer building on the Linux filesystem (faster / fewer permission issues than `
 
 ```bash
 rsync -a --exclude '.buildozer' --exclude 'bin' --exclude 'data' \
+  --exclude '.git' --exclude 'assets/reference' --exclude '__pycache__' \
+  --exclude '_*.sh' \
   /mnt/c/Users/Dad/Documents/DobbyCatRomGame/ ~/DobbyCatRomGame/
 cd ~/DobbyCatRomGame
 buildozer android debug
@@ -51,7 +61,7 @@ cd /mnt/c/Users/Dad/Documents/DobbyCatRomGame
 buildozer android debug
 ```
 
-First build downloads the Android SDK/NDK (r28b for 16 KB page-size support) and compiles pygame-ce via the local recipe in `p4a-recipes/pygame-ce` — expect a long wait. Later builds are faster. `p4a.branch = develop` is required for the NDK r28 toolchain defaults.
+First build downloads Android API 35 and NDK r28b, then compiles pygame-ce via the local recipe in `p4a-recipes/pygame-ce` — expect a long wait. Later builds are faster. `p4a.branch = develop` supplies the NDK r28 / 16 KB page-size toolchain support used by this project.
 
 If the first run stops on “Aidl not found” / licenses, accept licenses then rebuild:
 
@@ -60,7 +70,7 @@ yes | ~/.buildozer/android/platform/android-sdk/tools/bin/sdkmanager \
   --sdk_root=$HOME/.buildozer/android/platform/android-sdk --licenses
 ~/.buildozer/android/platform/android-sdk/tools/bin/sdkmanager \
   --sdk_root=$HOME/.buildozer/android/platform/android-sdk \
-  "platform-tools" "platforms;android-34" "build-tools;34.0.0"
+  "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 buildozer android debug
 ```
 
@@ -69,7 +79,7 @@ buildozer android debug
 Debug APK lands at:
 
 ```text
-bin/boothblaster-0.1.3-arm64-v8a-debug.apk
+bin/boothblaster-0.1.10-arm64-v8a-debug.apk
 ```
 
 (Exact name follows `package.name` + `version` + arch in `buildozer.spec`.)
@@ -83,6 +93,22 @@ mkdir -p /mnt/c/Users/Dad/Documents/DobbyCatRomGame/bin
 cp -v ~/DobbyCatRomGame/bin/*.apk /mnt/c/Users/Dad/Documents/DobbyCatRomGame/bin/
 ```
 
+## Validate 16 KB alignment
+
+Run both checks in WSL after the APK is built. The first checks APK ZIP alignment; the NDK helper checks the packaged native ELF libraries:
+
+```bash
+cd ~/DobbyCatRomGame
+APK=bin/boothblaster-0.1.10-arm64-v8a-debug.apk
+SDK_ROOT="$HOME/.buildozer/android/platform/android-sdk"
+NDK_ROOT="$HOME/.buildozer/android/platform/android-ndk-r28b"
+
+"$SDK_ROOT/build-tools/35.0.0/zipalign" -c -P 16 -v 4 "$APK"
+"$NDK_ROOT/build/tools/check_elf_alignment.sh" "$APK"
+```
+
+`zipalign` must finish with `Verification successful`. The NDK helper must report the arm64 native libraries as aligned; treat any `UNALIGNED` result as a failed release check. If Buildozer installed the NDK under a suffixed directory, set `NDK_ROOT` to the actual r28b directory shown in `.buildozer/android/platform/`.
+
 ## Sideload on a phone
 
 1. Copy the APK to the phone (USB, Drive, Messages, etc.).
@@ -94,6 +120,8 @@ Package id: `org.dobbycat.boothblaster` (portrait, arm64-v8a).
 
 ## Notes
 
-- APK requirements are `python3,pygame-ce` only (no numpy / Pillow).
+- This process intentionally produces a sideloadable debug APK; it does not configure signing or an AAB.
+- APK requirements are pinned host/runtime Python 3.11.11 plus `pygame-ce` only (no numpy / Pillow).
+- Android packaging keeps WAV and OGG audio but excludes `assets/reference`, development tools, tests, docs, and investigation helpers.
 - Keyboard + gamepad still work on desktop; phone uses touch + Android Back (hold for quit).
 - Leaderboard JSON is written under Android app-private storage, not into read-only assets.

@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import json
 import time
-from pathlib import Path
 from typing import Callable, Optional
 
 import pygame
@@ -18,34 +16,6 @@ HUD = (245, 235, 210)
 OK = (120, 220, 160)
 PANEL = (20, 24, 40, 210)
 BTN = (40, 48, 70)
-
-# #region agent log
-_DEBUG_LOG = Path(__file__).resolve().parents[1] / "debug-b4844d.log"
-
-
-def _dbg(hypothesis_id: str, location: str, message: str, data: dict) -> None:
-    try:
-        with _DEBUG_LOG.open("a", encoding="utf-8") as f:
-            f.write(
-                json.dumps(
-                    {
-                        "sessionId": "b4844d",
-                        "runId": "initials-picker",
-                        "hypothesisId": hypothesis_id,
-                        "location": location,
-                        "message": message,
-                        "data": data,
-                        "timestamp": int(time.time() * 1000),
-                    }
-                )
-                + "\n"
-            )
-    except Exception:
-        pass
-
-
-# #endregion
-
 
 class InitialsPicker:
     """3 letter slots + A–Z/0–9 grid + DONE."""
@@ -107,19 +77,6 @@ class InitialsPicker:
         left = min(grid_x0, slots_x0) - pad
         right = max(grid_x0 + grid_w, slots_x0 + slots_w) + pad
         self.panel_rect = pygame.Rect(left, top, right - left, bottom - top)
-        # #region agent log
-        _dbg(
-            "A",
-            "initials_ui.py:_layout",
-            "picker layout",
-            {
-                "center": list(self.center),
-                "panel": [self.panel_rect.x, self.panel_rect.y, self.panel_rect.w, self.panel_rect.h],
-                "done_top": self.done_rect.top,
-                "done_bottom": self.done_rect.bottom,
-            },
-        )
-        # #endregion
 
     def handle_click(
         self,
@@ -134,18 +91,12 @@ class InitialsPicker:
         """
         now = time.time()
         if now - self._last_click_ts < 0.12:
-            # #region agent log
-            _dbg("B", "initials_ui.py:debounce", "debounce consume", {"pos": list(pos), "idx": initial_idx})
-            # #endregion
             return True, initial_idx
 
         for i, rect in enumerate(self.slot_rects):
             if rect.collidepoint(pos):
                 self._last_click_ts = now
                 audio.play("ui_blip")
-                # #region agent log
-                _dbg("C", "initials_ui.py:slot", "slot selected", {"slot": i, "pos": list(pos)})
-                # #endregion
                 return True, i
 
         for ch, rect in self.cell_rects:
@@ -154,35 +105,16 @@ class InitialsPicker:
                 initials[initial_idx] = ch
                 audio.play("ui_blip")
                 next_idx = min(2, initial_idx + 1) if initial_idx < 2 else initial_idx
-                # #region agent log
-                _dbg(
-                    "C",
-                    "initials_ui.py:letter",
-                    "letter picked",
-                    {"ch": ch, "idx": initial_idx, "next": next_idx, "initials": list(initials)},
-                )
-                # #endregion
                 return True, next_idx
 
         if self.done_rect.collidepoint(pos):
             self._last_click_ts = now
-            # #region agent log
-            _dbg("D", "initials_ui.py:done", "done tapped", {"initials": list(initials)})
-            # #endregion
             on_done()
             return True, initial_idx
 
         if self.panel_rect.collidepoint(pos):
             self._last_click_ts = now
             return True, initial_idx
-        # #region agent log
-        _dbg(
-            "C",
-            "initials_ui.py:miss",
-            "click missed panel",
-            {"pos": list(pos), "panel": [self.panel_rect.x, self.panel_rect.y, self.panel_rect.w, self.panel_rect.h]},
-        )
-        # #endregion
         return False, initial_idx
 
     def draw(self, surface: pygame.Surface, initials: list[str], initial_idx: int) -> None:

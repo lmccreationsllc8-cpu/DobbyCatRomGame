@@ -27,7 +27,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install pygbag
-        run: python -m pip install --upgrade pip pygbag
+        run: python -m pip install --upgrade pip "pygbag==0.9.3"
 
       - name: Stage slim web package
         run: |

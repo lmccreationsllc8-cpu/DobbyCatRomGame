@@ -68,11 +68,11 @@ def _load_title_font(size: int) -> ImageFont.ImageFont:
     return ImageFont.load_default()
 
 
-def build_splash(bg: Image.Image, logo_path: Path) -> None:
+def build_splash(bg: Image.Image, logo_path: Path, dobby_path: Path | None = None) -> None:
     splash = bg.convert("RGBA")
     logo = tight_crop(knockout_black(Image.open(logo_path)))
 
-    wall_w = int(splash.width * 0.38)
+    wall_w = int(splash.width * 0.34)
     scale = wall_w / logo.width
     logo = logo.resize((wall_w, max(1, int(logo.height * scale))), Image.Resampling.LANCZOS)
     logo = ImageEnhance.Color(logo).enhance(0.95)
@@ -81,7 +81,7 @@ def build_splash(bg: Image.Image, logo_path: Path) -> None:
     logo.putalpha(alpha)
 
     logo_x = (splash.width - logo.width) // 2
-    logo_y = int(splash.height * 0.24)
+    logo_y = int(splash.height * 0.22)
     splash.paste(logo, (logo_x, logo_y), logo)
 
     # BOOTH BLASTER title above the logo
@@ -95,6 +95,18 @@ def build_splash(bg: Image.Image, logo_path: Path) -> None:
     # Soft shadow then accent pink
     draw.text((tx + 2, ty + 2), title, font=font, fill=(20, 20, 40, 220))
     draw.text((tx, ty), title, font=font, fill=(255, 105, 180, 255))
+
+    # Dobby on lower-left floor (Laser Monkey logo remains center hero)
+    cat_src = dobby_path if dobby_path is not None else DOBBY
+    if cat_src.is_file():
+        cat = tight_crop(Image.open(cat_src).convert("RGBA"), pad=0.02)
+        cat_h = int(splash.height * 0.22)
+        cscale = cat_h / cat.height
+        cat = cat.resize((max(1, int(cat.width * cscale)), cat_h), Image.Resampling.NEAREST)
+        cat_x = int(splash.width * 0.08)
+        cat_y = splash.height - cat.height - int(splash.height * 0.06)
+        splash.paste(cat, (cat_x, cat_y), cat)
+        print(f"dobby@{(cat_x, cat_y)} size={cat.size}")
 
     splash.convert("RGB").save(SPLASH_PATH, optimize=True)
     print(f"splash written {SPLASH_PATH} title@{(tx, ty)} logo@{(logo_x, logo_y)}")

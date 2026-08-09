@@ -2,46 +2,20 @@
 
 from __future__ import annotations
 
-import json
 import time
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Optional
 
 import pygame
 
 from core import audio
-from core.platform import load_font, writable_data_dir
+from core.platform import load_font
 
 ACCENT = (255, 105, 180)
 HUD = (245, 235, 210)
 PANEL = (20, 24, 40, 200)
 OK = (120, 220, 160)
 MUTED = (255, 80, 80)
-
-
-# #region agent log
-def _agent_log(hypothesis_id: str, message: str, data: dict | None = None) -> None:
-    payload = {
-        "sessionId": "b4844d",
-        "runId": "mute-pre",
-        "hypothesisId": hypothesis_id,
-        "location": "audio_ui.py",
-        "message": message,
-        "data": data or {},
-        "timestamp": int(time.time() * 1000),
-    }
-    line = json.dumps(payload)
-    print(f"AGENT_DEBUG {line}", flush=True)
-    for path in (writable_data_dir() / "debug-b4844d.log", Path("debug-b4844d.log")):
-        try:
-            with path.open("a", encoding="utf-8") as f:
-                f.write(line + "\n")
-        except OSError:
-            pass
-
-
-# #endregion
 
 
 @dataclass
@@ -112,17 +86,6 @@ class AudioPanel:
             _Btn(sfx_down, "sfx_down"),
             _Btn(sfx_up, "sfx_up"),
         ]
-        # #region agent log
-        _agent_log(
-            "A",
-            "AudioPanel layout",
-            {
-                "mute": list(mute),
-                "panel": list(self.panel_rect),
-                "top_right": list(top_right),
-            },
-        )
-        # #endregion
 
     def contains(self, pos: tuple[int, int]) -> bool:
         return self.panel_rect.collidepoint(pos)
@@ -133,23 +96,7 @@ class AudioPanel:
         # Android SDL emits both MOUSEBUTTONDOWN and FINGERDOWN for one tap.
         if now - getattr(self, "_last_click_ts", 0.0) < 0.12:
             # Only swallow duplicates when the prior click actually hit a control.
-            # #region agent log
-            _agent_log("E", "AudioPanel debounce skip", {"pos": list(pos)})
-            # #endregion
             return bool(getattr(self, "_last_click_hit", False))
-        hits = [btn.kind for btn in self.buttons if btn.rect.collidepoint(pos)]
-        # #region agent log
-        _agent_log(
-            "A",
-            "AudioPanel.handle_click",
-            {
-                "pos": list(pos),
-                "hits": hits,
-                "in_panel": self.panel_rect.collidepoint(pos),
-                "muted_before": audio.is_muted(),
-            },
-        )
-        # #endregion
         for btn in self.buttons:
             if btn.rect.collidepoint(pos):
                 self._last_click_ts = now
@@ -170,17 +117,6 @@ class AudioPanel:
                 elif btn.kind == "sfx_up":
                     audio.nudge_sfx_volume(0.1)
                     audio.play("ui_blip")
-                # #region agent log
-                _agent_log(
-                    "B",
-                    "AudioPanel action",
-                    {
-                        "kind": btn.kind,
-                        "muted_after": audio.is_muted(),
-                        "settings": audio.get_settings().__dict__,
-                    },
-                )
-                # #endregion
                 return True
         self._last_click_hit = False
         return False

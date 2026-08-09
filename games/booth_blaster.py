@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import random
 from dataclasses import dataclass
 from enum import Enum, auto
@@ -28,10 +29,15 @@ OK = (120, 220, 160)
 
 class EnemyKind(Enum):
     BOX = auto()
-    TOTE = auto()
-    CHILD = auto()
+    ZIPTIE = auto()
+    TEEN = auto()
     ADULT = auto()
+    LINECUTTER = auto()
+    SELFIE = auto()
+    GLOWSTICK = auto()
     MAID = auto()
+    MECHA = auto()
+    PILLOW = auto()
     BOSS = auto()
 
 
@@ -41,19 +47,41 @@ MAID_SPRITES = (
     "enemy_maid_lime.png",
 )
 
+# Base shoot chance per second; LINECUTTER fires ~1.25× adult cadence.
+_SHOOT_RATE_ADULT = 0.08
+_SHOOT_RATES = {
+    EnemyKind.MAID: _SHOOT_RATE_ADULT,
+    EnemyKind.ADULT: _SHOOT_RATE_ADULT,
+    EnemyKind.LINECUTTER: _SHOOT_RATE_ADULT * 1.25,
+    EnemyKind.SELFIE: _SHOOT_RATE_ADULT,
+    EnemyKind.BOSS: 0.35,
+}
+
 ENEMY_STATS = {
     # Wide, high-contrast silhouettes for blue booth backdrop
     EnemyKind.BOX: {"hp": 1, "score": 10, "w": 96, "h": 96, "color": (210, 170, 90), "sprite": "enemy_box.png"},
-    EnemyKind.TOTE: {"hp": 2, "score": 20, "w": 100, "h": 110, "color": (255, 45, 149), "sprite": "enemy_tote.png"},
-    EnemyKind.CHILD: {"hp": 2, "score": 25, "w": 100, "h": 120, "color": (80, 200, 255), "sprite": "enemy_child.png"},
+    EnemyKind.ZIPTIE: {"hp": 2, "score": 20, "w": 100, "h": 110, "color": (40, 220, 180), "sprite": "enemy_ziptie.png"},
+    EnemyKind.TEEN: {"hp": 2, "score": 25, "w": 100, "h": 120, "color": (80, 200, 255), "sprite": "enemy_teen.png"},
     EnemyKind.ADULT: {"hp": 3, "score": 35, "w": 110, "h": 130, "color": (255, 120, 40), "sprite": "enemy_adult.png"},
+    EnemyKind.LINECUTTER: {"hp": 3, "score": 40, "w": 110, "h": 130, "color": (255, 70, 90), "sprite": "enemy_linecutter.png"},
+    EnemyKind.SELFIE: {"hp": 3, "score": 40, "w": 110, "h": 130, "color": (255, 160, 220), "sprite": "enemy_selfie.png"},
+    EnemyKind.GLOWSTICK: {"hp": 3, "score": 45, "w": 110, "h": 130, "color": (180, 255, 60), "sprite": "enemy_glowstick.png"},
     EnemyKind.MAID: {"hp": 4, "score": 45, "w": 110, "h": 140, "color": (255, 80, 200), "sprite": "enemy_maid_pink.png"},
+    EnemyKind.MECHA: {"hp": 5, "score": 60, "w": 120, "h": 150, "color": (120, 140, 180), "sprite": "enemy_mecha.png"},
+    EnemyKind.PILLOW: {"hp": 1, "score": 150, "w": 110, "h": 90, "color": (240, 200, 220), "sprite": "enemy_pillow.png"},
     EnemyKind.BOSS: {"hp": 22, "score": 300, "w": 280, "h": 220, "color": (180, 120, 255), "sprite": "enemy_boss.png"},
 }
 
+PILLOW_FLY_Y = 180.0
+PILLOW_SPEED = 160.0
+
 
 def _knockout_light_bg(surf: pygame.Surface) -> pygame.Surface:
-    """Safety net for leftover white studio plates. Prefers pre-cleaned RGBA assets."""
+    """Strip studio plates only when connected to the image edge.
+
+    Never blanket-delete light pixels — that ate white fur, eyes, saber cores,
+    and other interior fills. Prefers pre-cleaned RGBA assets.
+    """
     out = surf.convert_alpha()
     # Avoid packaging numpy for the web build (pygbag scans imports).
     try:
@@ -66,6 +94,7 @@ def _knockout_light_bg(surf: pygame.Surface) -> pygame.Surface:
     try:
         import importlib
         import sys
+        from collections import deque
 
         if sys.platform == "emscripten":
             return out
@@ -78,9 +107,37 @@ def _knockout_light_bg(surf: pygame.Surface) -> pygame.Surface:
         b = rgb[:, :, 2].astype(np.int16)
         luma = 0.299 * r + 0.587 * g + 0.114 * b
         sat = np.maximum(np.maximum(r, g), b) - np.minimum(np.minimum(r, g), b)
-        # Only strip obvious light plates / empty alpha — never eat dark outlines/vests.
-        mask = ((luma >= 230) & (sat <= 30) & (alpha > 0)) | (alpha < 8)
-        alpha[mask] = 0
+        # Candidate plate: near-white / empty alpha. Interior whites are kept
+        # unless flood-fill reaches them from the border.
+        plate = ((luma >= 242) & (sat <= 18) & (alpha > 0)) | (alpha < 8)
+        # If the sprite already has substantial transparency, skip — assets are
+        # pre-cleaned and global light knockout only damages fills.
+        if float(np.mean(alpha < 8)) > 0.08:
+            alpha[alpha < 8] = 0
+            del rgb, alpha
+            return out
+
+        # pygame surfarray is indexed [x, y] → shape (width, height).
+        width, height = alpha.shape
+        visited = np.zeros((width, height), dtype=np.bool_)
+        q: deque[tuple[int, int]] = deque()
+        for x in range(width):
+            for y in (0, height - 1):
+                if plate[x, y] and not visited[x, y]:
+                    visited[x, y] = True
+                    q.append((x, y))
+        for y in range(height):
+            for x in (0, width - 1):
+                if plate[x, y] and not visited[x, y]:
+                    visited[x, y] = True
+                    q.append((x, y))
+        while q:
+            x, y = q.popleft()
+            for nx, ny in ((x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1)):
+                if 0 <= nx < width and 0 <= ny < height and not visited[nx, ny] and plate[nx, ny]:
+                    visited[nx, ny] = True
+                    q.append((nx, ny))
+        alpha[visited] = 0
         del rgb, alpha
     except Exception:
         pass
@@ -131,6 +188,7 @@ class Enemy:
     col: int = 0
     row: int = 0
     sprite_key: str = ""
+    armored: bool = False  # MECHA: first hit chips armor, no HP loss
 
     @property
     def stats(self) -> dict:
@@ -144,6 +202,10 @@ class Enemy:
     def draw_key(self) -> str:
         return self.sprite_key or f"enemy_{self.kind.name.lower()}"
 
+    @property
+    def is_flyer(self) -> bool:
+        return self.kind == EnemyKind.PILLOW
+
 
 @dataclass
 class Barrier:
@@ -153,6 +215,8 @@ class Barrier:
     max_hp: int = 8
     w: int = 120
     h: int = 72
+    # Slot 0 = leftmost; keeps graffiti frames after other barriers despawn.
+    slot: int = 0
 
     @property
     def rect(self) -> pygame.Rect:
@@ -241,6 +305,8 @@ class BoothBlaster:
             key = name.replace(".png", "")
             self._sprites[key] = _load_sprite(name, maid_size, maid_color)
         self._sprites["barrier"] = _load_sprite("barrier_crate.png", (120, 72), (40, 40, 48))
+        self._sprites["barrier_d1"] = _load_sprite("barrier_crate_d1.png", (120, 72), (40, 40, 48))
+        self._sprites["barrier_d2"] = _load_sprite("barrier_crate_d2.png", (120, 72), (40, 40, 48))
         bg_path = SPRITES_DIR / "bg_booth.png"
         if bg_path.is_file():
             try:
@@ -254,7 +320,44 @@ class BoothBlaster:
     def _spawn_barriers(self) -> None:
         ys = HEIGHT - 420
         xs = [WIDTH * 0.18, WIDTH * 0.38, WIDTH * 0.62, WIDTH * 0.82]
-        self.barriers = [Barrier(x=x, y=ys) for x in xs]
+        self.barriers = [Barrier(x=x, y=ys, slot=i) for i, x in enumerate(xs)]
+
+    def _barrier_draw_sprite(self, bar: Barrier) -> pygame.Surface:
+        """Leftmost barrier: pristine→d1→d2 graffiti frames; others keep alpha fade."""
+        if bar.slot == 0:
+            ratio = bar.hp / bar.max_hp if bar.max_hp else 0.0
+            if ratio > 2.0 / 3.0:
+                return self._sprites["barrier"]
+            if ratio > 1.0 / 3.0:
+                return self._sprites["barrier_d1"]
+            return self._sprites["barrier_d2"]
+        spr = self._sprites["barrier"].copy()
+        if bar.hp < bar.max_hp:
+            fade = int(255 * (bar.hp / bar.max_hp))
+            spr.set_alpha(max(80, fade))
+        return spr
+
+    def _kind_for_cell(self, row: int, col: int, wave_index: int) -> EnemyKind:
+        """Formation layout: top MAID/MECHA, mid TEEN/ADULT/LINECUTTER/GLOWSTICK(+SELFIE), bottom BOX/ZIPTIE."""
+        if row == 0:
+            # Top: MAID; MECHA + SELFIE from wave 2+
+            if wave_index >= 2 and col % 4 == 1:
+                return EnemyKind.MECHA
+            if wave_index >= 2 and col % 5 == 3:
+                return EnemyKind.SELFIE
+            return EnemyKind.MAID
+        if row == 1:
+            # Mid: wave 1 TEEN/ADULT; wave 2+ adds LINECUTTER/GLOWSTICK/SELFIE
+            if wave_index >= 2 and col % 5 == 0:
+                return EnemyKind.SELFIE
+            mid_pool = (
+                (EnemyKind.TEEN, EnemyKind.ADULT, EnemyKind.LINECUTTER, EnemyKind.GLOWSTICK)
+                if wave_index >= 2
+                else (EnemyKind.TEEN, EnemyKind.ADULT)
+            )
+            return mid_pool[col % len(mid_pool)]
+        # Bottom: BOX + ZIPTIE
+        return EnemyKind.BOX if col % 2 == 0 else EnemyKind.ZIPTIE
 
     def _spawn_wave(self, wave_index: int) -> None:
         self.enemies.clear()
@@ -275,14 +378,7 @@ class BoothBlaster:
 
         for r in range(rows):
             for c in range(cols):
-                if r == 0:
-                    kind = EnemyKind.MAID if c % 3 == 0 else EnemyKind.ADULT
-                elif r == 1:
-                    kind = EnemyKind.CHILD if c % 2 == 0 else EnemyKind.TOTE
-                else:
-                    kind = EnemyKind.BOX
-                if wave_index >= 3 and r == 0 and c % 2 == 0:
-                    kind = EnemyKind.MAID
+                kind = self._kind_for_cell(r, c, wave_index)
                 stats = ENEMY_STATS[kind]
                 sprite_key = ""
                 if kind == EnemyKind.MAID:
@@ -296,8 +392,22 @@ class BoothBlaster:
                         col=c,
                         row=r,
                         sprite_key=sprite_key,
+                        armored=(kind == EnemyKind.MECHA),
                     )
                 )
+
+        # One pillow flyer per wave (independent of formation march).
+        pillow = ENEMY_STATS[EnemyKind.PILLOW]
+        self.enemies.append(
+            Enemy(
+                kind=EnemyKind.PILLOW,
+                x=-pillow["w"] / 2,
+                y=PILLOW_FLY_Y,
+                hp=pillow["hp"],
+                col=-1,
+                row=-1,
+            )
+        )
 
     def _spawn_boss(self) -> None:
         self.wave.boss_active = True
@@ -393,21 +503,32 @@ class BoothBlaster:
             self.player.cooldown = self.FIRE_COOLDOWN
             audio.play("shoot")
 
-        # Enemies march
-        if self.enemies:
+        # Enemies march (formation only; flyers move independently)
+        marchers = [e for e in self.enemies if not e.is_flyer]
+        if marchers:
             self.step_timer += dt
             if self.step_timer >= self.step_interval:
                 self.step_timer = 0.0
                 self._march_enemies()
                 audio.play("march", volume=0.35 if self.wave.boss_active else 0.22)
 
-            # Selfie / boss shooting
-            for e in self.enemies:
-                if e.kind in (EnemyKind.MAID, EnemyKind.ADULT, EnemyKind.BOSS) and random.random() < (0.35 if e.kind == EnemyKind.BOSS else 0.08) * dt:
+            for e in marchers:
+                rate = _SHOOT_RATES.get(e.kind)
+                if rate is not None and random.random() < rate * dt:
                     self.bolts.append(
                         Bolt(e.x, e.y + e.stats["h"] / 2, self.ENEMY_BOLT_SPEED, False, w=34, h=34)
                     )
                     audio.play("enemy_shoot", volume=0.45)
+
+        # Pillow flyers drift across; despawn off-screen (no score)
+        for e in self.enemies:
+            if e.is_flyer:
+                e.x += PILLOW_SPEED * dt
+        self.enemies = [
+            e
+            for e in self.enemies
+            if not (e.is_flyer and (e.rect.right < -20 or e.rect.left > WIDTH + 20))
+        ]
 
         # Bolts
         for b in self.bolts:
@@ -442,8 +563,10 @@ class BoothBlaster:
             ):
                 self._spawn_wave(self.wave.index)
 
-        # Lose if enemies reach bottom
+        # Lose if formation enemies reach bottom (flyers stay in the upper lane)
         for e in self.enemies:
+            if e.is_flyer:
+                continue
             if e.rect.bottom >= self.player.rect.top - 10:
                 self._player_hit()
                 e.y -= 40  # nudge so we don't multi-hit every frame
@@ -451,20 +574,21 @@ class BoothBlaster:
         return self
 
     def _march_enemies(self) -> None:
-        if not self.enemies:
+        marchers = [e for e in self.enemies if not e.is_flyer]
+        if not marchers:
             return
         step_x = 28 if not self.wave.boss_active else 40
         drop = 36
-        min_x = min(e.rect.left for e in self.enemies)
-        max_x = max(e.rect.right for e in self.enemies)
+        min_x = min(e.rect.left for e in marchers)
+        max_x = max(e.rect.right for e in marchers)
         if self.drop_pending:
-            for e in self.enemies:
+            for e in marchers:
                 e.y += drop
             self.dir *= -1
             self.drop_pending = False
             self.step_interval = max(0.18, self.step_interval * 0.97)
             return
-        for e in self.enemies:
+        for e in marchers:
             e.x += step_x * self.dir
         if (self.dir > 0 and max_x + step_x >= WIDTH - 40) or (self.dir < 0 and min_x - step_x <= 40):
             self.drop_pending = True
@@ -479,8 +603,13 @@ class BoothBlaster:
                     if e in dead_enemies:
                         continue
                     if b.rect.colliderect(e.rect):
-                        e.hp -= 1
                         hit = True
+                        # MECHA armor chip: first hit while armored strips armor only
+                        if e.armored:
+                            e.armored = False
+                            audio.play("hit")
+                            break
+                        e.hp -= 1
                         if e.hp <= 0:
                             self.score += e.stats["score"]
                             dead_enemies.append(e)
@@ -539,35 +668,6 @@ class BoothBlaster:
             else None
         )
         self._block_fire = False
-        # #region agent log
-        try:
-            import json as _json
-            from pathlib import Path as _Path
-            import time as _time
-
-            _p = _Path(__file__).resolve().parents[1] / "debug-b4844d.log"
-            with _p.open("a", encoding="utf-8") as _f:
-                _f.write(
-                    _json.dumps(
-                        {
-                            "sessionId": "b4844d",
-                            "runId": "initials-picker",
-                            "hypothesisId": "A",
-                            "location": "booth_blaster.py:_begin_score_entry",
-                            "message": "score entry started",
-                            "data": {
-                                "score": self.score,
-                                "qualifies": self._entering_score,
-                                "picker": self._initials_picker is not None,
-                            },
-                            "timestamp": int(_time.time() * 1000),
-                        }
-                    )
-                    + "\n"
-                )
-        except Exception:
-            pass
-        # #endregion
 
     def _submit_initials(self) -> None:
         name = "".join(self._initials)
@@ -576,31 +676,6 @@ class BoothBlaster:
         self._entering_score = False
         self._initials_picker = None
         audio.play("ui_confirm")
-        # #region agent log
-        try:
-            import json as _json
-            from pathlib import Path as _Path
-            import time as _time
-
-            _p = _Path(__file__).resolve().parents[1] / "debug-b4844d.log"
-            with _p.open("a", encoding="utf-8") as _f:
-                _f.write(
-                    _json.dumps(
-                        {
-                            "sessionId": "b4844d",
-                            "runId": "initials-picker",
-                            "hypothesisId": "D",
-                            "location": "booth_blaster.py:_submit_initials",
-                            "message": "initials submitted",
-                            "data": {"name": name, "score": self.score},
-                            "timestamp": int(_time.time() * 1000),
-                        }
-                    )
-                    + "\n"
-                )
-        except Exception:
-            pass
-        # #endregion
 
     def _update_initials_entry(self, dt: float, inp: InputState) -> None:
         """Navigate the on-screen letter grid on both stick/D-pad axes."""
@@ -669,13 +744,9 @@ class BoothBlaster:
         else:
             self._draw_gradient_bg(surface)
 
-        # Barriers
+        # Barriers — leftmost (slot 0) swaps graffiti damage frames; others alpha-fade.
         for bar in self.barriers:
-            spr = self._sprites["barrier"].copy()
-            if bar.hp < bar.max_hp:
-                # Chip effect via alpha / darken
-                fade = int(255 * (bar.hp / bar.max_hp))
-                spr.set_alpha(max(80, fade))
+            spr = self._barrier_draw_sprite(bar)
             surface.blit(spr, spr.get_rect(center=(int(bar.x), int(bar.y))))
 
         # Enemies
@@ -731,27 +802,6 @@ class BoothBlaster:
                 tip_text, _, _ = control_prompt_lines("Restart")
                 tip = self._font.render(tip_text, True, HUD_COLOR)
                 surface.blit(tip, tip.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 60)))
-                # #region agent log
-                if getattr(self, "_dbg_last_restart_tip", None) != tip_text:
-                    self._dbg_last_restart_tip = tip_text
-                    try:
-                        import pygame as _pg
-
-                        from core.input import _agent_dbg, classify_pad
-
-                        pads = []
-                        for i in range(_pg.joystick.get_count()):
-                            j = _pg.joystick.Joystick(i)
-                            pads.append({"name": j.get_name(), "profile": classify_pad(j.get_name())})
-                        _agent_dbg(
-                            "E",
-                            "booth_blaster.py:draw",
-                            "restart tip shown",
-                            {"tip_text": tip_text, "pad_count": len(pads), "pads": pads},
-                        )
-                    except Exception:
-                        pass
-                # #endregion
                 self._draw_leaderboard(surface, HEIGHT // 2 + 20)
 
     def _draw_leaderboard(self, surface: pygame.Surface, top_y: int) -> None:
@@ -832,6 +882,15 @@ class LoadingScene:
 class TitleScene:
     """Simple title → Booth Blaster launcher."""
 
+    PHOENIX_WINDOW = 1.5
+    PHOENIX_PATTERN = ("up", "up", "fire")
+    # Sequence timeline (seconds from trigger).
+    _PHOENIX_FLY_DUR = 1.15
+    _PHOENIX_BURN_START = 0.45
+    _PHOENIX_BURN_DUR = 0.85
+    _PHOENIX_HOLD = 0.35
+    _PHOENIX_RESTORE = 0.55
+
     def __init__(self) -> None:
         self.idle_timer = 0.0
         self.exit_requested = False
@@ -841,6 +900,15 @@ class TitleScene:
         self.next_scene: Optional[BoothBlaster] = None
         self._audio_panel = AudioPanel((WIDTH - 36, 36), scale=1.15)
         self._block_confirm = False
+        # Phoenix title secret (one-shot per visit).
+        self._phoenix: Optional[pygame.Surface] = None
+        self._phoenix_buf: list[str] = []
+        self._phoenix_buf_age = 0.0
+        self._phoenix_done = False
+        self._phoenix_active = False
+        self._phoenix_t = 0.0
+        self._prev_up = False
+        self._touch_konami = False  # touch handled konami this frame; skip pad/key fire
         audio.play_music("title")
 
     def _ensure(self) -> None:
@@ -848,7 +916,68 @@ class TitleScene:
             return
         self._font = load_font(36)
         self._font_lg = load_font(72, bold=True)
+        self._phoenix = _load_sprite("fx_phoenix.png", (280, 200), (255, 120, 40))
         self._ready = True
+
+    def _phoenix_total_dur(self) -> float:
+        return (
+            self._PHOENIX_BURN_START
+            + self._PHOENIX_BURN_DUR
+            + self._PHOENIX_HOLD
+            + self._PHOENIX_RESTORE
+        )
+
+    def _phoenix_push(self, token: str) -> bool:
+        """Push konami token. Returns True if sequence just triggered."""
+        if self._phoenix_done or self._phoenix_active:
+            return False
+        if self._phoenix_buf and self._phoenix_buf_age >= self.PHOENIX_WINDOW:
+            self._phoenix_buf.clear()
+            self._phoenix_buf_age = 0.0
+        if not self._phoenix_buf:
+            self._phoenix_buf_age = 0.0
+        expected = self.PHOENIX_PATTERN[len(self._phoenix_buf)] if len(self._phoenix_buf) < len(self.PHOENIX_PATTERN) else None
+        if token != expected:
+            self._phoenix_buf = [token] if token == "up" else []
+            self._phoenix_buf_age = 0.0
+            return False
+        self._phoenix_buf.append(token)
+        if tuple(self._phoenix_buf) == self.PHOENIX_PATTERN:
+            self._begin_phoenix()
+            return True
+        return False
+
+    def _begin_phoenix(self) -> None:
+        self._phoenix_buf.clear()
+        self._phoenix_buf_age = 0.0
+        self._phoenix_done = True
+        self._phoenix_active = True
+        self._phoenix_t = 0.0
+        self._block_confirm = True
+        self.idle_timer = 0.0
+        audio.play("phoenix_screech")
+
+    def _handle_pointer_konami(self, lx: float, ly: float) -> None:
+        """Touch/mouse zones: upper third = up; lower third = fire."""
+        if self._audio_panel.handle_click((int(lx), int(ly))):
+            self.idle_timer = 0.0
+            self._block_confirm = True
+            return
+        self.idle_timer = 0.0
+        if self._phoenix_active:
+            # Ignore start confirm while burn sequence plays.
+            self._block_confirm = True
+            return
+        self._touch_konami = True
+        if ly < HEIGHT / 3:
+            self._phoenix_push("up")
+            # Up taps must never start the game.
+            self._block_confirm = True
+        elif ly > 2 * HEIGHT / 3:
+            if self._phoenix_push("fire"):
+                self._block_confirm = True
+            # else: allow confirm_pressed to start normally
+        # Middle third: normal confirm / start via InputState
 
     def handle_event(self, event: pygame.event.Event) -> None:
         if event.type == pygame.KEYDOWN:
@@ -878,76 +1007,56 @@ class TitleScene:
             if getattr(event, "touch", False):
                 return
             lx, ly = window_to_logical(*event.pos)
-            # #region agent log
-            try:
-                import json
-                import time
-                from pathlib import Path
-
-                from core.platform import writable_data_dir
-
-                payload = {
-                    "sessionId": "b4844d",
-                    "runId": "mute-post",
-                    "hypothesisId": "D",
-                    "location": "TitleScene.handle_event",
-                    "message": "MOUSEBUTTONDOWN",
-                    "data": {"raw": list(event.pos), "logical": [lx, ly], "touch": getattr(event, "touch", None)},
-                    "timestamp": int(time.time() * 1000),
-                }
-                line = json.dumps(payload)
-                print(f"AGENT_DEBUG {line}", flush=True)
-                for path in (writable_data_dir() / "debug-b4844d.log", Path("debug-b4844d.log")):
-                    try:
-                        with path.open("a", encoding="utf-8") as f:
-                            f.write(line + "\n")
-                    except OSError:
-                        pass
-            except Exception:
-                pass
-            # #endregion
-            if self._audio_panel.handle_click((int(lx), int(ly))):
-                self.idle_timer = 0.0
-                self._block_confirm = True
+            self._handle_pointer_konami(lx, ly)
         if event.type == pygame.FINGERDOWN:
             lx, ly = event.x * WIDTH, event.y * HEIGHT
-            # #region agent log
-            try:
-                import json
-                import time
-                from pathlib import Path
-
-                from core.platform import writable_data_dir
-
-                payload = {
-                    "sessionId": "b4844d",
-                    "runId": "mute-post",
-                    "hypothesisId": "D",
-                    "location": "TitleScene.handle_event",
-                    "message": "FINGERDOWN",
-                    "data": {"norm": [event.x, event.y], "logical": [lx, ly]},
-                    "timestamp": int(time.time() * 1000),
-                }
-                line = json.dumps(payload)
-                print(f"AGENT_DEBUG {line}", flush=True)
-                for path in (writable_data_dir() / "debug-b4844d.log", Path("debug-b4844d.log")):
-                    try:
-                        with path.open("a", encoding="utf-8") as f:
-                            f.write(line + "\n")
-                    except OSError:
-                        pass
-            except Exception:
-                pass
-            # #endregion
-            if self._audio_panel.handle_click((int(lx), int(ly))):
-                self.idle_timer = 0.0
-                self._block_confirm = True
+            self._handle_pointer_konami(lx, ly)
 
     def update(self, dt: float, inp: InputState) -> Optional[object]:
         self._ensure()
+
+        # Phoenix burn sequence: ignore start confirm; keep kiosk idle from firing.
+        if self._phoenix_active:
+            self.idle_timer = 0.0
+            self._phoenix_t += dt
+            self._touch_konami = False
+            self._block_confirm = False
+            if self._phoenix_t >= self._phoenix_total_dur():
+                self._phoenix_active = False
+            if inp.exit_ready:
+                self.exit_requested = True
+                return None
+            return self
+
+        if self._phoenix_buf:
+            self._phoenix_buf_age += dt
+            if self._phoenix_buf_age >= self.PHOENIX_WINDOW:
+                self._phoenix_buf.clear()
+                self._phoenix_buf_age = 0.0
+
+        # Keyboard / pad konami (touch zones handled in handle_event).
+        if not self._touch_konami and not self._phoenix_done:
+            up_now = inp.move_y < -0.5
+            if up_now and not self._prev_up:
+                if self._phoenix_push("up"):
+                    self._block_confirm = True
+            self._prev_up = up_now
+            if (inp.fire_pressed or inp.confirm_pressed) and not self._block_confirm:
+                if self._phoenix_push("fire"):
+                    self._block_confirm = True
+        else:
+            if not self._touch_konami:
+                self._prev_up = inp.move_y < -0.5
+        self._touch_konami = False
+
         if self._block_confirm:
             self._block_confirm = False
             return self
+        if self._phoenix_active:
+            # Triggered this frame via push; stay on title.
+            self.idle_timer = 0.0
+            return self
+
         if inp.any_activity:
             self.idle_timer = 0.0
         else:
@@ -963,8 +1072,7 @@ class TitleScene:
             return BoothBlaster(from_title=True)
         return self
 
-    def draw(self, surface: pygame.Surface) -> None:
-        self._ensure()
+    def _draw_title_base(self, surface: pygame.Surface) -> None:
         assert self._font and self._font_lg
         BoothBlaster._draw_gradient_bg(surface)
         title = self._font_lg.render("BOOTH BLASTER", True, ACCENT)
@@ -973,33 +1081,6 @@ class TitleScene:
         tip = self._font.render(tip_text, True, OK)
         tip2 = self._font.render(tip2_text, True, HUD_COLOR)
         tip3 = self._font.render(tip3_text, True, HUD_COLOR)
-        # #region agent log
-        if getattr(self, "_dbg_last_start_tip", None) != tip_text:
-            self._dbg_last_start_tip = tip_text
-            try:
-                import pygame as _pg
-
-                from core.input import _agent_dbg, classify_pad
-
-                pads = []
-                for i in range(_pg.joystick.get_count()):
-                    j = _pg.joystick.Joystick(i)
-                    pads.append({"name": j.get_name(), "profile": classify_pad(j.get_name())})
-                _agent_dbg(
-                    "E",
-                    "booth_blaster.py:TitleScene.draw",
-                    "start tip shown",
-                    {
-                        "tip_text": tip_text,
-                        "tip2": tip2_text,
-                        "tip3": tip3_text,
-                        "pad_count": len(pads),
-                        "pads": pads,
-                    },
-                )
-            except Exception:
-                pass
-        # #endregion
         tip4 = self._font.render("M mute · [ ] music · , . sfx", True, HUD_COLOR)
         surface.blit(title, title.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 420)))
         surface.blit(sub, sub.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 340)))
@@ -1015,3 +1096,63 @@ class TitleScene:
         dummy._font = self._font
         dummy._font_lg = self._font_lg
         BoothBlaster._draw_leaderboard(dummy, surface, HEIGHT // 2 - 40)
+
+    def _burn_alpha(self) -> float:
+        """0..1 opacity of scorch overlay during the phoenix sequence."""
+        t = self._phoenix_t
+        burn0 = self._PHOENIX_BURN_START
+        burn1 = burn0 + self._PHOENIX_BURN_DUR
+        hold1 = burn1 + self._PHOENIX_HOLD
+        end = hold1 + self._PHOENIX_RESTORE
+        if t < burn0:
+            return 0.0
+        if t < burn1:
+            return (t - burn0) / self._PHOENIX_BURN_DUR
+        if t < hold1:
+            return 1.0
+        if t < end:
+            return 1.0 - (t - hold1) / self._PHOENIX_RESTORE
+        return 0.0
+
+    def _draw_phoenix_fx(self, surface: pygame.Surface) -> None:
+        if not self._phoenix_active or self._phoenix is None:
+            return
+        t = self._phoenix_t
+        # Flyer crosses left → right while visible.
+        if t <= self._PHOENIX_FLY_DUR + 0.15:
+            u = min(1.0, t / self._PHOENIX_FLY_DUR)
+            x = -180 + u * (WIDTH + 360)
+            y = HEIGHT * 0.28 + math.sin(u * math.pi * 2.0) * 36
+            surface.blit(self._phoenix, self._phoenix.get_rect(center=(int(x), int(y))))
+
+        burn = self._burn_alpha()
+        if burn <= 0.01:
+            return
+        # Scorch wipe: charcoal veil + ember edge sweeping downward.
+        burn_end = self._PHOENIX_BURN_START + self._PHOENIX_BURN_DUR
+        if t >= burn_end:
+            wipe_y = HEIGHT
+        else:
+            wipe_u = max(0.0, (t - self._PHOENIX_BURN_START) / self._PHOENIX_BURN_DUR)
+            wipe_y = int(HEIGHT * wipe_u)
+        overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        a = int(210 * burn)
+        if wipe_y > 0:
+            overlay.fill((28, 12, 8, a), rect=pygame.Rect(0, 0, WIDTH, wipe_y))
+            fringe = max(8, min(48, wipe_y))
+            for i in range(fringe):
+                fa = int(a * (1.0 - i / fringe) * 0.85)
+                y = wipe_y - fringe + i
+                if 0 <= y < HEIGHT:
+                    pygame.draw.line(
+                        overlay,
+                        (255, int(90 + 80 * (i / fringe)), 30, fa),
+                        (0, y),
+                        (WIDTH, y),
+                    )
+        surface.blit(overlay, (0, 0))
+
+    def draw(self, surface: pygame.Surface) -> None:
+        self._ensure()
+        self._draw_title_base(surface)
+        self._draw_phoenix_fx(surface)

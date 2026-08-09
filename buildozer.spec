@@ -12,17 +12,22 @@ package.domain = org.dobbycat
 # (str) Source code where the main.py live
 source.dir = .
 
-# (list) Source files to include (let empty to include all the files)
+# (list) Runtime source files to include. Keep WAV for Android audio playback.
 source.include_exts = py,png,jpg,jpeg,wav,ogg,ttf,otf,json,txt,md
 
-# (list) List of inclusions using pattern matching
-source.include_patterns = assets/*,assets/**/*
+# (list) Runtime asset trees (do not broadly include assets/reference)
+source.include_patterns = assets/audio/*,assets/fonts/*,assets/sprites/*,assets/icon.png
 
-# (list) List of directory to exclude (let empty to not exclude anything)
-source.exclude_dirs = tests,bin,venv,.buildozer,.git,tools,__pycache__,data
+# (list) Development/build directories that must not ship in the APK
+# p4a-recipes is intentionally retained: Android builds use the local pygame-ce recipe.
+source.exclude_dirs = tests,bin,venv,.venv,.buildozer,.git,.github,.cursor,tools,docs,__pycache__,data,reference
+
+# (list) Investigation helpers, build recipes, and generated/reference artifacts to exclude
+# Local recipes remain available to p4a from the source tree but must not enter private.tar.
+source.exclude_patterns = assets/reference/*,assets/reference/**/*,p4a-recipes/*,p4a-recipes/**/*,_*,debug-*.log,_apk_*,_apk_*/*
 
 # (str) Application versioning (method 1)
-version = 0.1.9
+version = 0.1.10
 
 # (list) Application requirements — no numpy/Pillow in the APK
 requirements = hostpython3==3.11.11,python3==3.11.11,pygame-ce

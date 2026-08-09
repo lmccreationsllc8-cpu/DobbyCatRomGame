@@ -30,6 +30,7 @@ SFX_FILES = {
     "ui_confirm": "ui_confirm.wav",
     "ui_blip": "ui_blip.wav",
     "march": "march.wav",
+    "phoenix_screech": "phoenix_screech.wav",
 }
 
 MUSIC_FILES = {
@@ -120,48 +121,8 @@ def _persist() -> None:
 
 def set_muted(muted: bool) -> None:
     global _music_current
-    before = _settings.muted
     _settings.muted = bool(muted)
     _persist()
-    # #region agent log
-    try:
-        import json
-        import time
-        from pathlib import Path
-
-        from core.platform import writable_data_dir
-
-        busy = False
-        try:
-            busy = bool(pygame.mixer.music.get_busy())
-        except pygame.error:
-            busy = False
-        payload = {
-            "sessionId": "b4844d",
-            "runId": "mute-pre",
-            "hypothesisId": "C",
-            "location": "audio.py:set_muted",
-            "message": "set_muted",
-            "data": {
-                "before": before,
-                "after": _settings.muted,
-                "music_current": _music_current,
-                "mixer_busy": busy,
-                "music_vol_applied": 0.0 if _settings.muted else _settings.music_volume,
-            },
-            "timestamp": int(time.time() * 1000),
-        }
-        line = json.dumps(payload)
-        print(f"AGENT_DEBUG {line}", flush=True)
-        for path in (writable_data_dir() / "debug-b4844d.log", Path("debug-b4844d.log")):
-            try:
-                with path.open("a", encoding="utf-8") as f:
-                    f.write(line + "\n")
-            except OSError:
-                pass
-    except Exception:
-        pass
-    # #endregion
     if _settings.muted:
         try:
             pygame.mixer.music.set_volume(0.0)

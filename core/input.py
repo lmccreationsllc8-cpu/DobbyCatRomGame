@@ -13,49 +13,8 @@ from config import (
     PAD_FIRE_BUTTONS,
     PAD_SELECT_BUTTONS,
     PAD_START_BUTTONS,
-    ROOT,
     WIDTH,
 )
-
-# #region agent log
-_DBG_LAST_MS = 0
-
-
-def _agent_dbg(hypothesis_id: str, location: str, message: str, data: dict) -> None:
-    """NDJSON debug ingest for session 0b90b9 (throttled by caller)."""
-    try:
-        import json
-        import time
-        from pathlib import Path
-
-        payload = {
-            "sessionId": "0b90b9",
-            "runId": "post-fix",
-            "hypothesisId": hypothesis_id,
-            "location": location,
-            "message": message,
-            "data": data,
-            "timestamp": int(time.time() * 1000),
-        }
-        line = json.dumps(payload)
-        for path in (ROOT / "debug-0b90b9.log", Path("debug-0b90b9.log")):
-            try:
-                with path.open("a", encoding="utf-8") as f:
-                    f.write(line + "\n")
-            except OSError:
-                pass
-        try:
-            from core.platform import writable_data_dir
-
-            with (writable_data_dir() / "debug-0b90b9.log").open("a", encoding="utf-8") as f:
-                f.write(line + "\n")
-        except OSError:
-            pass
-    except Exception:
-        pass
-
-
-# #endregion
 
 # Common DualShock / XInput-style button indices (kept for readability / docs).
 BTN_CROSS = 0  # A / Cross — fire / confirm
@@ -254,7 +213,6 @@ class InputManager:
         fire_held = False
         confirm_raw = False
         select_held = False
-        start_held = False
         activity = False
         aim_x: Optional[float] = None
 
@@ -284,7 +242,6 @@ class InputManager:
             activity = True
         if keys[pygame.K_TAB]:
             # Tab = Start / Options — confirm only (quit is Select/Share/Esc).
-            start_held = True
             confirm_raw = True
             activity = True
 
@@ -293,13 +250,7 @@ class InputManager:
         select_btns = PAD_SELECT_BUTTONS
         start_btns = PAD_START_BUTTONS
 
-        # #region agent log
-        pad_samples: list[dict] = []
-        # #endregion
         for joy in self._joysticks:
-            raw_ax = joy.get_axis(0) if joy.get_numaxes() >= 1 else None
-            raw_ay = joy.get_axis(1) if joy.get_numaxes() >= 2 else None
-            hat = joy.get_hat(0) if joy.get_numhats() >= 1 else None
             if joy.get_numaxes() >= 1:
                 axis = joy.get_axis(0)
                 if abs(axis) > 0.25:
@@ -320,13 +271,10 @@ class InputManager:
                     activity = True
 
             nbtn = joy.get_numbuttons()
-            fire_on = False
-            start_on = False
             for idx in fire_btns:
                 if nbtn > idx and joy.get_button(idx):
                     fire_held = True
                     activity = True
-                    fire_on = True
                     break
             for idx in select_btns:
                 if nbtn > idx and joy.get_button(idx):
@@ -336,27 +284,9 @@ class InputManager:
             # Start (SNES) / Options (DualShock): confirm start/restart only.
             for idx in start_btns:
                 if nbtn > idx and joy.get_button(idx):
-                    start_held = True
                     confirm_raw = True
                     activity = True
-                    start_on = True
                     break
-            # #region agent log
-            pad_samples.append(
-                {
-                    "name": joy.get_name(),
-                    "profile": classify_pad(joy.get_name()),
-                    "raw_ax": None if raw_ax is None else round(float(raw_ax), 3),
-                    "raw_ay": None if raw_ay is None else round(float(raw_ay), 3),
-                    "hat": hat,
-                    "ax_above_dz": raw_ax is not None and abs(raw_ax) > 0.25,
-                    "ax_sub_dz": raw_ax is not None and 0.0 < abs(raw_ax) <= 0.25,
-                    "fire_on": fire_on,
-                    "start_on": start_on,
-                    "select_on": select_held,
-                }
-            )
-            # #endregion
 
         # Touch / mouse pointers — drag to steer, hold to auto-fire (full width).
         if self._pointers:
@@ -390,51 +320,6 @@ class InputManager:
             activity = True
         else:
             self._exit_hold = 0.0
-
-        # #region agent log
-        global _DBG_LAST_MS
-        import time as _time
-
-        now_ms = int(_time.time() * 1000)
-        pad_active = any(
-            (s.get("raw_ax") not in (None, 0.0) and abs(float(s["raw_ax"])) > 0.02)
-            or (s.get("raw_ay") not in (None, 0.0) and abs(float(s["raw_ay"])) > 0.02)
-            or (s.get("hat") not in (None, (0, 0)))
-            or s.get("fire_on")
-            or s.get("start_on")
-            or s.get("select_on")
-            for s in pad_samples
-        )
-        if pad_active and now_ms - _DBG_LAST_MS >= 100:
-            _DBG_LAST_MS = now_ms
-            player_speed = 1200.0  # keep in sync with BoothBlaster.PLAYER_SPEED
-            eff = abs(move_x) * player_speed
-            _agent_dbg(
-                "A,B,C,D",
-                "input.py:poll",
-                "pad poll sample",
-                {
-                    "move_x": round(move_x, 3),
-                    "move_y": round(move_y, 3),
-                    "fire_held": fire_held,
-                    "fire_pressed": fire_pressed,
-                    "confirm_pressed": confirm_pressed,
-                    "confirm_raw": confirm_raw,
-                    "start_held": start_held,
-                    "select_held": select_held,
-                    "exit_held": exit_held,
-                    "exit_hold": round(self._exit_hold, 2),
-                    "exit_ready": self._exit_hold >= EXIT_COMBO_HOLD_SECONDS,
-                    "aim_x": aim_x,
-                    "pads": pad_samples,
-                    "deadzone": 0.25,
-                    "player_speed": player_speed,
-                    "effective_px_s": round(eff, 1),
-                    "cross_screen_s": round(WIDTH / eff, 2) if eff > 1e-6 else None,
-                    "touch_mode": aim_x is not None,
-                },
-            )
-        # #endregion
 
         return InputState(
             move_x=move_x,
