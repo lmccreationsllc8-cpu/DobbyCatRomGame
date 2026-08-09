@@ -1,11 +1,11 @@
-Booth Blaster sprite inspiration (do not copy raw photos into gameplay):
+Booth Blaster — rebuild inputs only (not packaged in the APK).
 
-  C:\Users\Dad\rcars-kiosk\assets\dobby\dobby.jpg
-    — tabby + battle vest, pink accents (player look)
+Kept in-repo:
+  splash_cutout_box_dobby.png
+  splash_cutout_meow_head.png
+    — transparent cutouts for tools/build_splash_and_restore_bg.py
 
-  C:\Users\Dad\rcars-kiosk\assets\dobby\images\20260313_190728.jpg
-    — dino-hoodie Dobby, booth crates / saber rack (palette, barriers, booth vibe)
-
-Generated gameplay art lives in ../sprites/ as small pixel-art PNGs.
+Gameplay sprites live in ../sprites/.
+Do not commit raw photo inspiration or one-off QA dumps here.
 
 Pi SNES / 2.4G controller setup: see ../../docs/controller-pi.md

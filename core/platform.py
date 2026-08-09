@@ -109,9 +109,9 @@ def apply_mobile_runtime_tweaks() -> None:
 
 
 def mixer_buffer() -> int:
-    """Larger buffer is more stable on Android Bluetooth / weak devices."""
+    """Larger buffer is more stable on Android Bluetooth / weak devices / WASM."""
     if is_web() or is_android():
-        return 2048
+        return 4096
     return 512
 
 

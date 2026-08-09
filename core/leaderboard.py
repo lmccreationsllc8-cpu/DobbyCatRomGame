@@ -1,7 +1,7 @@
 """Local high-score leaderboard (JSON on disk or browser localStorage).
 
-DBY is always first place. Display score is min(999, 3 × highest real score),
-or 999 when there are no real scores yet. Only human scores are persisted.
+DBY is always first place at the hard-coded perfect campaign score.
+Only human scores are persisted.
 """
 
 from __future__ import annotations
@@ -14,7 +14,9 @@ from config import MAX_ENTRIES
 from core import storage
 
 DBY_NAME = "DBY"
-DBY_SCORE_CAP = 999
+# Hard-coded vanity top score — always first on the board.
+DBY_SCORE = 99999
+DBY_WAVE = 4
 RESERVED_NAMES = frozenset({DBY_NAME})
 _STORE_NAME = "leaderboard.json"
 
@@ -57,20 +59,8 @@ def _load_real_scores() -> list[ScoreEntry]:
     return _parse_entries(raw)
 
 
-def _dby_score(real: list[ScoreEntry]) -> int:
-    if not real:
-        return DBY_SCORE_CAP
-    return min(DBY_SCORE_CAP, 3 * max(e.score for e in real))
-
-
-def _dby_wave(real: list[ScoreEntry]) -> int:
-    if not real:
-        return 9
-    return max(e.wave for e in real)
-
-
 def _with_dby(real: list[ScoreEntry]) -> list[ScoreEntry]:
-    dby = ScoreEntry(name=DBY_NAME, score=_dby_score(real), wave=_dby_wave(real))
+    dby = ScoreEntry(name=DBY_NAME, score=DBY_SCORE, wave=DBY_WAVE)
     return [dby] + real[: max(0, MAX_ENTRIES - 1)]
 
 

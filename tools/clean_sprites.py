@@ -82,7 +82,6 @@ def main() -> int:
         "barrier_crate_d1.png",
         "barrier_crate_d2.png",
         "fx_phoenix.png",
-        "decal_phoenix_sticker.png",
         "paw_bolt.png",
         "paw_enemy.png",
         "bolt.png",

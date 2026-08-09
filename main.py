@@ -48,6 +48,7 @@ async def main() -> None:
             break
 
         inp = inputs.poll(dt)
+        audio.tick(dt)
         next_scene = scene.update(dt, inp)  # type: ignore[union-attr]
 
         if getattr(scene, "exit_requested", False):

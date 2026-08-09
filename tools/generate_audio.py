@@ -134,7 +134,7 @@ def wav_to_ogg(wav_path: Path) -> None:
             "-c:a",
             "libvorbis",
             "-q:a",
-            "5",
+            "7",
             str(ogg_path),
         ],
         check=True,
@@ -273,6 +273,49 @@ def make_sfx() -> None:
     write_wav(phoenix_path, screech)
     wav_to_ogg(phoenix_path)
 
+    # Short victory fanfare for campaign clear cutscene.
+    fanfare = _mix(
+        _tone(NOTE["C5"], 0.12, "square", 0.28),
+        _tone(NOTE["E5"], 0.12, "square", 0.28),
+        _tone(NOTE["G5"], 0.12, "square", 0.3),
+        _tone(NOTE["C5"], 0.1, "triangle", 0.22),
+        _tone(NOTE["E5"], 0.1, "triangle", 0.22),
+        _tone(NOTE["G5"], 0.1, "triangle", 0.24),
+        _tone(NOTE["C5"], 0.45, "square", 0.32, release=0.28),
+        gap=0.03,
+    )
+    fanfare = _overlay(
+        fanfare,
+        _mix(
+            _tone(NOTE["G4"], 0.55, "triangle", 0.12, release=0.3),
+            _tone(NOTE["C5"], 0.55, "triangle", 0.1, release=0.3),
+            gap=0.35,
+        ),
+    )
+    fanfare_path = OUT / "victory_fanfare.wav"
+    write_wav(fanfare_path, fanfare)
+    wav_to_ogg(fanfare_path)
+
+
+def _loop_crossfade(mono: np.ndarray, fade_s: float = 0.12) -> np.ndarray:
+    """Blend loop endpoints so pygame -1 loops do not click on mobile."""
+    n = len(mono)
+    fade_n = min(n // 4, max(1, int(fade_s * SR)))
+    if fade_n < 8:
+        return mono
+    out = mono.copy()
+    blend = np.linspace(0.0, 1.0, fade_n)
+    start = out[:fade_n].copy()
+    end = out[-fade_n:].copy()
+    out[:fade_n] = start * blend + end * (1.0 - blend)
+    out[-fade_n:] = end * (1.0 - blend) + start * blend
+    # Soft zero endpoints after blend to kill residual clicks.
+    tip = min(fade_n // 3, int(0.02 * SR))
+    if tip > 1:
+        out[:tip] *= np.linspace(0.0, 1.0, tip)
+        out[-tip:] *= np.linspace(1.0, 0.0, tip)
+    return out
+
 
 def _drum_kick(dur: float = 0.12) -> np.ndarray:
     return _slide(120, 40, dur, "triangle", 0.45)
@@ -399,7 +442,8 @@ def make_music_game() -> None:
         wave="saw",
         vol=0.045,
     )
-    write_wav(OUT / "music_game.wav", _overlay(ostinato[:n], bass[:n], drums, warning[:n]))
+    bed = _overlay(ostinato[:n], bass[:n], drums, warning[:n])
+    write_wav(OUT / "music_game.wav", _loop_crossfade(bed, fade_s=0.14))
 
 
 def make_music_boss() -> None:
@@ -443,7 +487,16 @@ def make_music_boss() -> None:
     ]
     drums = _place(n, kicks + hats)
     sub = _sine(55.0, n) * (0.06 + 0.025 * np.sin(2 * np.pi * np.arange(n) / SR / beat))
-    write_wav(OUT / "music_boss.wav", _overlay(lead[:n], bass[:n], pulse[:n], drums, sub))
+    bed = _overlay(lead[:n], bass[:n], pulse[:n], drums, sub)
+    write_wav(OUT / "music_boss.wav", _loop_crossfade(bed, fade_s=0.12))
+
+
+def encode_music_oggs() -> None:
+    """Re-encode BGM (and any missing SFX) OGGs at the configured quality."""
+    for name in ("music_title.wav", "music_game.wav", "music_boss.wav", "victory_fanfare.wav"):
+        path = OUT / name
+        if path.is_file():
+            wav_to_ogg(path)
 
 
 def main() -> None:
@@ -452,6 +505,7 @@ def main() -> None:
     make_music_title()
     make_music_game()
     make_music_boss()
+    encode_music_oggs()
     print("audio ready in", OUT)
 
 

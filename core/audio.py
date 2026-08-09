@@ -8,13 +8,17 @@ from typing import Optional
 import pygame
 
 import config
-from core.platform import is_web
+from core.platform import is_android, is_web
 from core.settings import AudioSettings, load_audio_settings, save_audio_settings
 
 _initialized = False
 _sounds: dict[str, pygame.mixer.Sound] = {}
 _music_current: Optional[str] = None
+_pending_music: Optional[tuple[str, bool]] = None
+_music_fade_remaining = 0.0
 _settings = AudioSettings()
+
+_MUSIC_FADE_MS = 350
 
 SFX_FILES = {
     "shoot": "shoot.wav",
@@ -31,6 +35,7 @@ SFX_FILES = {
     "ui_blip": "ui_blip.wav",
     "march": "march.wav",
     "phoenix_screech": "phoenix_screech.wav",
+    "victory_fanfare": "victory_fanfare.wav",
 }
 
 MUSIC_FILES = {
@@ -53,10 +58,6 @@ def _resolve_audio_file(filename: str) -> Optional[Path]:
         if path.is_file():
             return path
     return None
-
-# Defaults kept for import compatibility with older call sites.
-MUSIC_VOLUME = 0.42
-SFX_VOLUME = 0.55
 
 
 def init() -> None:
@@ -185,19 +186,14 @@ def play(name: str, volume: Optional[float] = None) -> None:
         pass
 
 
-def play_music(name: str, loop: bool = True) -> None:
-    """Start looping background music by key (title/game/boss)."""
+def _start_music(name: str, loop: bool) -> None:
+    """Load and play a music key immediately."""
     global _music_current
-    if not _initialized:
-        return
     filename = MUSIC_FILES.get(name)
     if not filename:
         return
     path = _resolve_audio_file(filename)
     if path is None:
-        return
-    if _music_current == name and pygame.mixer.music.get_busy():
-        _apply_volumes()
         return
     try:
         pygame.mixer.music.load(str(path))
@@ -210,10 +206,62 @@ def play_music(name: str, loop: bool = True) -> None:
         pass
 
 
-def stop_music(fade_ms: int = 400) -> None:
-    global _music_current
+def play_music(name: str, loop: bool = True) -> None:
+    """Start looping background music by key (title/game/boss)."""
+    global _music_current, _pending_music, _music_fade_remaining
     if not _initialized:
         return
+    if name not in MUSIC_FILES:
+        return
+    if _music_current == name and _pending_music is None and pygame.mixer.music.get_busy():
+        _apply_volumes()
+        return
+    # Soft-cut on mobile/web to avoid crackle from hard load() swaps.
+    soft = is_web() or is_android()
+    busy = False
+    try:
+        busy = bool(pygame.mixer.music.get_busy())
+    except pygame.error:
+        busy = False
+    if soft and busy and _music_current and _music_current != name:
+        try:
+            pygame.mixer.music.fadeout(_MUSIC_FADE_MS)
+        except pygame.error:
+            pass
+        _pending_music = (name, loop)
+        _music_fade_remaining = _MUSIC_FADE_MS / 1000.0
+        _music_current = name
+        return
+    _pending_music = None
+    _music_fade_remaining = 0.0
+    _start_music(name, loop)
+
+
+def tick(dt: float) -> None:
+    """Advance deferred music swaps after a mobile/web fade-out."""
+    global _pending_music, _music_fade_remaining
+    if _pending_music is None:
+        return
+    _music_fade_remaining -= max(0.0, dt)
+    busy = False
+    try:
+        busy = bool(pygame.mixer.music.get_busy())
+    except pygame.error:
+        busy = False
+    if _music_fade_remaining > 0.0 and busy:
+        return
+    name, loop = _pending_music
+    _pending_music = None
+    _music_fade_remaining = 0.0
+    _start_music(name, loop)
+
+
+def stop_music(fade_ms: int = 400) -> None:
+    global _music_current, _pending_music, _music_fade_remaining
+    if not _initialized:
+        return
+    _pending_music = None
+    _music_fade_remaining = 0.0
     try:
         if fade_ms > 0:
             pygame.mixer.music.fadeout(fade_ms)
@@ -225,7 +273,7 @@ def stop_music(fade_ms: int = 400) -> None:
 
 
 def shutdown() -> None:
-    global _initialized, _music_current
+    global _initialized, _music_current, _pending_music, _music_fade_remaining
     if not _initialized:
         return
     try:
@@ -235,4 +283,6 @@ def shutdown() -> None:
         pass
     _sounds.clear()
     _music_current = None
+    _pending_music = None
+    _music_fade_remaining = 0.0
     _initialized = False
