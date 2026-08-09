@@ -66,10 +66,30 @@ async def main() -> None:
 
         if next_scene is not None and next_scene is not scene:
             scene = next_scene
+            # Let the browser breathe after splash→title / title→game switches.
+            await asyncio.sleep(0)
+
+        # Chunk heavy sprite loads across frames (critical on single-thread WASM).
+        load_step = getattr(scene, "load_assets_step", None)
+        is_loading = getattr(scene, "assets_loading", None)
+        if callable(load_step) and callable(is_loading) and is_loading():
+            load_step()
+            canvas.fill((20, 16, 32))
+            if screen.get_size() != canvas.get_size():
+                pygame.transform.scale(canvas, screen.get_size(), screen)
+            else:
+                screen.blit(canvas, (0, 0))
+            pygame.display.flip()
+            await asyncio.sleep(0)
+            continue
 
         scene.draw(canvas)  # type: ignore[union-attr]
         if screen.get_size() != canvas.get_size():
-            pygame.transform.smoothscale(canvas, screen.get_size(), screen)
+            # Prefer nearest on web — smoothscale every frame is expensive.
+            if is_web():
+                pygame.transform.scale(canvas, screen.get_size(), screen)
+            else:
+                pygame.transform.smoothscale(canvas, screen.get_size(), screen)
         else:
             screen.blit(canvas, (0, 0))
         pygame.display.flip()

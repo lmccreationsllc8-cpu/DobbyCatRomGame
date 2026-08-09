@@ -89,6 +89,30 @@ def _ensure_mixer() -> bool:
         return False
 
 
+def _load_sound(key: str) -> Optional[pygame.mixer.Sound]:
+    """Load one SFX by key; cache on success."""
+    if key in _sounds:
+        return _sounds[key]
+    filename = SFX_FILES.get(key)
+    if not filename:
+        return None
+    path = _resolve_audio_file(filename)
+    if path is None:
+        return None
+    try:
+        sound = pygame.mixer.Sound(str(path))
+    except pygame.error:
+        return None
+    _sounds[key] = sound
+    try:
+        head = _output_headroom()
+        sfx_v = 0.0 if _settings.muted else _settings.sfx_volume * head
+        sound.set_volume(sfx_v)
+    except pygame.error:
+        pass
+    return sound
+
+
 def init() -> None:
     """Initialize mixer and load available assets. Safe to call multiple times."""
     global _initialized, _settings
@@ -99,15 +123,11 @@ def init() -> None:
         _initialized = True
         return
 
-    for key, filename in SFX_FILES.items():
-        path = _resolve_audio_file(filename)
-        if path is None:
-            continue
-        try:
-            sound = pygame.mixer.Sound(str(path))
-            _sounds[key] = sound
-        except pygame.error:
-            continue
+    # Desktop/Android: preload. Web: lazy-load on first play — decoding every
+    # OGG up front stalls the single-threaded WASM loop for seconds.
+    if not is_web():
+        for key in SFX_FILES:
+            _load_sound(key)
     _initialized = True
     _apply_volumes()
 
@@ -203,7 +223,7 @@ def nudge_sfx_volume(delta: float) -> float:
 def play(name: str, volume: Optional[float] = None) -> None:
     if _settings.muted or not _initialized:
         return
-    sound = _sounds.get(name)
+    sound = _load_sound(name)
     if sound is None:
         return
     try:

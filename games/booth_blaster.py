@@ -382,6 +382,9 @@ class BoothBlaster:
         self._sprites: dict[str, pygame.Surface] = {}
         self._bg: Optional[pygame.Surface] = None
         self._assets_ready = False
+        self._asset_phase = 0
+        self._asset_enemy_kinds = list(ENEMY_STATS.keys())
+        self._asset_enemy_i = 0
         self._entering_score = False
         self._score_saved = False
         self._initials = ["A", "A", "A"]
@@ -394,36 +397,81 @@ class BoothBlaster:
         self._spawn_wave(self.wave.index)
         audio.play_music("game")
 
-    def _ensure_assets(self) -> None:
+    def assets_loading(self) -> bool:
+        return not self._assets_ready
+
+    def load_assets_step(self) -> bool:
+        """Load a small asset batch. Returns True while more work remains.
+
+        Call from the async main loop between ``await asyncio.sleep(0)`` so the
+        browser stays responsive (WASM has no threads).
+        """
         if self._assets_ready:
-            return
-        self._font = load_font(36)
-        self._font_lg = load_font(64, bold=True)
-        self._sprites["player"] = _load_sprite(player_skin_filename(), (220, 220), (180, 120, 70))
-        self._sprites["bolt"] = _load_sprite("paw_bolt.png", (40, 40), (255, 180, 220))
-        self._sprites["enemy_bolt"] = _load_sprite("paw_enemy.png", (36, 36), (255, 90, 70))
-        self._sprites["treat"] = _load_sprite("proj_treat.png", (40, 40), (230, 160, 70))
-        self._sprites["net"] = _load_sprite("proj_net.png", (44, 44), (90, 200, 255))
-        for kind, stats in ENEMY_STATS.items():
-            key = f"enemy_{kind.name.lower()}"
-            self._sprites[key] = _load_sprite(stats["sprite"], (stats["w"], stats["h"]), stats["color"])
-        maid_size = (ENEMY_STATS[EnemyKind.MAID]["w"], ENEMY_STATS[EnemyKind.MAID]["h"])
-        maid_color = ENEMY_STATS[EnemyKind.MAID]["color"]
-        for name in MAID_SPRITES:
-            key = name.replace(".png", "")
-            self._sprites[key] = _load_sprite(name, maid_size, maid_color)
-        self._sprites["barrier"] = _load_sprite("barrier_crate.png", (120, 72), (40, 40, 48))
-        self._sprites["barrier_d1"] = _load_sprite("barrier_crate_d1.png", (120, 72), (40, 40, 48))
-        self._sprites["barrier_d2"] = _load_sprite("barrier_crate_d2.png", (120, 72), (40, 40, 48))
+            return False
+        if self._asset_phase == 0:
+            self._font = load_font(36)
+            self._font_lg = load_font(64, bold=True)
+            self._sprites["player"] = _load_sprite(player_skin_filename(), (220, 220), (180, 120, 70))
+            self._sprites["bolt"] = _load_sprite("paw_bolt.png", (40, 40), (255, 180, 220))
+            self._sprites["enemy_bolt"] = _load_sprite("paw_enemy.png", (36, 36), (255, 90, 70))
+            self._sprites["treat"] = _load_sprite("proj_treat.png", (40, 40), (230, 160, 70))
+            self._sprites["net"] = _load_sprite("proj_net.png", (44, 44), (90, 200, 255))
+            self._asset_phase = 1
+            return True
+        if self._asset_phase == 1:
+            # A few enemy sprites per step keeps each frame under a hitch budget.
+            batch = 3
+            while batch > 0 and self._asset_enemy_i < len(self._asset_enemy_kinds):
+                kind = self._asset_enemy_kinds[self._asset_enemy_i]
+                stats = ENEMY_STATS[kind]
+                key = f"enemy_{kind.name.lower()}"
+                self._sprites[key] = _load_sprite(stats["sprite"], (stats["w"], stats["h"]), stats["color"])
+                self._asset_enemy_i += 1
+                batch -= 1
+            if self._asset_enemy_i >= len(self._asset_enemy_kinds):
+                self._asset_phase = 2
+            return True
+        if self._asset_phase == 2:
+            maid_size = (ENEMY_STATS[EnemyKind.MAID]["w"], ENEMY_STATS[EnemyKind.MAID]["h"])
+            maid_color = ENEMY_STATS[EnemyKind.MAID]["color"]
+            for name in MAID_SPRITES:
+                key = name.replace(".png", "")
+                self._sprites[key] = _load_sprite(name, maid_size, maid_color)
+            self._sprites["barrier"] = _load_sprite("barrier_crate.png", (120, 72), (40, 40, 48))
+            self._sprites["barrier_d1"] = _load_sprite("barrier_crate_d1.png", (120, 72), (40, 40, 48))
+            self._sprites["barrier_d2"] = _load_sprite("barrier_crate_d2.png", (120, 72), (40, 40, 48))
+            self._asset_phase = 3
+            return True
+        # phase 3: background
         bg_path = SPRITES_DIR / "bg_booth.png"
         if bg_path.is_file():
             try:
-                self._bg = pygame.transform.smoothscale(
-                    pygame.image.load(str(bg_path)).convert(), (WIDTH, HEIGHT)
-                )
+                raw = pygame.image.load(str(bg_path)).convert()
+                try:
+                    from core.platform import is_web
+
+                    scaler = pygame.transform.scale if is_web() else pygame.transform.smoothscale
+                except Exception:
+                    scaler = pygame.transform.smoothscale
+                self._bg = scaler(raw, (WIDTH, HEIGHT))
             except pygame.error:
                 self._bg = None
         self._assets_ready = True
+        return False
+
+    def _ensure_assets(self) -> None:
+        """Load remaining assets. On web, main.py chunks via ``load_assets_step``."""
+        if self._assets_ready:
+            return
+        try:
+            from core.platform import is_web
+
+            if is_web():
+                return
+        except Exception:
+            pass
+        while self.load_assets_step():
+            pass
 
     def _spawn_barriers(self) -> None:
         ys = HEIGHT - 420
@@ -646,6 +694,8 @@ class BoothBlaster:
 
     def update(self, dt: float, inp: InputState) -> Optional[object]:
         self._ensure_assets()
+        if not self._assets_ready:
+            return self
 
         if inp.any_activity:
             self.idle_timer = 0.0
@@ -1000,6 +1050,9 @@ class BoothBlaster:
 
     def draw(self, surface: pygame.Surface) -> None:
         self._ensure_assets()
+        if not self._assets_ready or self._font is None or self._font_lg is None:
+            self._draw_gradient_bg(surface)
+            return
         assert self._font and self._font_lg
 
         if self._bg:
@@ -1139,14 +1192,21 @@ class BoothBlaster:
             sy = HEIGHT // 2 - 40 + int(math.sin(ang) * 90)
             pygame.draw.circle(surface, (255, 255, 200), (sx, sy), 4 + (i % 3))
 
+    _gradient_bg: Optional[pygame.Surface] = None
+
     @staticmethod
     def _draw_gradient_bg(surface: pygame.Surface) -> None:
-        for y in range(0, HEIGHT, 4):
-            t = y / HEIGHT
-            r = int(BG_TOP[0] * (1 - t) + BG_BOTTOM[0] * t)
-            g = int(BG_TOP[1] * (1 - t) + BG_BOTTOM[1] * t)
-            b = int(BG_TOP[2] * (1 - t) + BG_BOTTOM[2] * t)
-            pygame.draw.rect(surface, (r, g, b), (0, y, WIDTH, 4))
+        cached = BoothBlaster._gradient_bg
+        if cached is None or cached.get_size() != (WIDTH, HEIGHT):
+            cached = pygame.Surface((WIDTH, HEIGHT))
+            for y in range(0, HEIGHT, 4):
+                t = y / HEIGHT
+                r = int(BG_TOP[0] * (1 - t) + BG_BOTTOM[0] * t)
+                g = int(BG_TOP[1] * (1 - t) + BG_BOTTOM[1] * t)
+                b = int(BG_TOP[2] * (1 - t) + BG_BOTTOM[2] * t)
+                pygame.draw.rect(cached, (r, g, b), (0, y, WIDTH, 4))
+            BoothBlaster._gradient_bg = cached
+        surface.blit(cached, (0, 0))
 
 
 class LoadingScene:
@@ -1167,7 +1227,14 @@ class LoadingScene:
         if path.is_file():
             try:
                 img = pygame.image.load(str(path)).convert()
-                self._splash = pygame.transform.smoothscale(img, (WIDTH, HEIGHT))
+                # smoothscale is very costly on WASM; nearest is fine for splash.
+                try:
+                    from core.platform import is_web
+
+                    scaler = pygame.transform.scale if is_web() else pygame.transform.smoothscale
+                except Exception:
+                    scaler = pygame.transform.smoothscale
+                self._splash = scaler(img, (WIDTH, HEIGHT))
             except pygame.error:
                 self._splash = None
         self._ready = True
@@ -1216,9 +1283,12 @@ class TitleScene:
         self._font_lg: Optional[pygame.font.Font] = None
         self._font_sm: Optional[pygame.font.Font] = None
         self._ready = False
+        # Spread title asset work across frames so WASM does not freeze after splash.
+        self._load_phase = 0
+        self._enter_grace = 0.45
         self.next_scene: Optional[BoothBlaster] = None
         self._audio_panel = AudioPanel((WIDTH - 36, 36), scale=1.15)
-        self._block_confirm = False
+        self._block_confirm = True
         # Phoenix title secret (one-shot per visit).
         self._phoenix: Optional[pygame.Surface] = None
         self._phoenix_buf: list[str] = []
@@ -1232,16 +1302,21 @@ class TitleScene:
         self._skin_index = load_player_skin_index()
         self._skin_preview: Optional[pygame.Surface] = None
         self._skin_label = ""
-        audio.play_music("title")
 
     def _ensure(self) -> None:
         if self._ready:
             return
-        self._font = load_font(36)
-        self._font_lg = load_font(72, bold=True)
-        self._font_sm = load_font(28)
+        # Phase 0: fonts only (cheap). Phase 1: sprites + music (heavier on WASM).
+        if self._load_phase == 0:
+            self._font = load_font(36)
+            self._font_lg = load_font(72, bold=True)
+            self._font_sm = load_font(28)
+            self._load_phase = 1
+            return
         self._phoenix = _load_sprite("fx_phoenix.png", (280, 200), (255, 120, 40))
         self._reload_skin_preview()
+        audio.play_music("title")
+        self._load_phase = 2
         self._ready = True
 
     def _reload_skin_preview(self) -> None:
@@ -1376,6 +1451,14 @@ class TitleScene:
 
     def update(self, dt: float, inp: InputState) -> Optional[object]:
         self._ensure()
+        # Finish staged load before accepting Start (also drains splash-skip taps).
+        if not self._ready:
+            self._block_confirm = True
+            return self
+        if self._enter_grace > 0.0:
+            self._enter_grace = max(0.0, self._enter_grace - dt)
+            self._block_confirm = True
+            return self
 
         # Phoenix burn sequence: ignore start confirm; keep kiosk idle from firing.
         if self._phoenix_active:
@@ -1539,6 +1622,9 @@ class TitleScene:
         surface.blit(overlay, (0, 0))
 
     def draw(self, surface: pygame.Surface) -> None:
-        self._ensure()
+        # Do not call _ensure here — update advances one load phase per frame.
+        if not self._ready or self._font is None or self._font_lg is None or self._font_sm is None:
+            BoothBlaster._draw_gradient_bg(surface)
+            return
         self._draw_title_base(surface)
         self._draw_phoenix_fx(surface)
