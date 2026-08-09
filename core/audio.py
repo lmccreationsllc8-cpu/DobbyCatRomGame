@@ -60,19 +60,42 @@ def _resolve_audio_file(filename: str) -> Optional[Path]:
     return None
 
 
+def _ensure_mixer() -> bool:
+    """Open the mixer with platform-appropriate buffer/rate.
+
+    ``pygame.init()`` often opens the mixer with a tiny default buffer first.
+    On web that causes underrun crackle, so we always re-init there.
+    """
+    from core.platform import mixer_buffer, mixer_frequency
+
+    freq = mixer_frequency()
+    buf = mixer_buffer()
+    want_web_or_mobile = is_web() or is_android()
+    try:
+        current = pygame.mixer.get_init()
+        if current is not None:
+            cur_freq, _fmt, _ch = current
+            # Buffer size is not reported by get_init(); force a clean open on
+            # web/Android so we never keep pygame's default 512-sample buffer.
+            if want_web_or_mobile or cur_freq != freq:
+                pygame.mixer.quit()
+                current = None
+        if current is None:
+            pygame.mixer.init(frequency=freq, size=-16, channels=2, buffer=buf)
+        # Fewer concurrent voices on WASM avoids saturating the audio graph.
+        pygame.mixer.set_num_channels(8 if is_web() else 16)
+        return True
+    except pygame.error:
+        return False
+
+
 def init() -> None:
     """Initialize mixer and load available assets. Safe to call multiple times."""
     global _initialized, _settings
     if _initialized:
         return
     _settings = load_audio_settings()
-    try:
-        if not pygame.mixer.get_init():
-            from core.platform import mixer_buffer
-
-            pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=mixer_buffer())
-        pygame.mixer.set_num_channels(16)
-    except pygame.error:
+    if not _ensure_mixer():
         _initialized = True
         return
 
@@ -101,9 +124,15 @@ def is_muted() -> bool:
     return _settings.muted
 
 
+def _output_headroom() -> float:
+    """Leave mix headroom on web — WASM clip/distortion is harsher than desktop."""
+    return 0.72 if is_web() else 1.0
+
+
 def _apply_volumes() -> None:
-    music_v = 0.0 if _settings.muted else _settings.music_volume
-    sfx_v = 0.0 if _settings.muted else _settings.sfx_volume
+    head = _output_headroom()
+    music_v = 0.0 if _settings.muted else _settings.music_volume * head
+    sfx_v = 0.0 if _settings.muted else _settings.sfx_volume * head
     try:
         pygame.mixer.music.set_volume(music_v)
     except pygame.error:
@@ -133,7 +162,7 @@ def set_muted(muted: bool) -> None:
     else:
         # Resume or restart last track if paused/stopped.
         try:
-            pygame.mixer.music.set_volume(_settings.music_volume)
+            pygame.mixer.music.set_volume(_settings.music_volume * _output_headroom())
             if pygame.mixer.music.get_busy():
                 pygame.mixer.music.unpause()
             elif _music_current:
@@ -180,7 +209,7 @@ def play(name: str, volume: Optional[float] = None) -> None:
     try:
         channel = sound.play()
         if channel is not None and volume is not None:
-            base = _settings.sfx_volume
+            base = _settings.sfx_volume * _output_headroom()
             channel.set_volume(max(0.0, min(1.0, base * volume)))
     except pygame.error:
         pass
@@ -197,7 +226,8 @@ def _start_music(name: str, loop: bool) -> None:
         return
     try:
         pygame.mixer.music.load(str(path))
-        pygame.mixer.music.set_volume(0.0 if _settings.muted else _settings.music_volume)
+        music_v = 0.0 if _settings.muted else _settings.music_volume * _output_headroom()
+        pygame.mixer.music.set_volume(music_v)
         pygame.mixer.music.play(-1 if loop else 0)
         _music_current = name
         if _settings.muted:

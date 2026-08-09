@@ -108,9 +108,20 @@ def apply_mobile_runtime_tweaks() -> None:
     config.LEADERBOARD_PATH = leaderboard_path()
 
 
+def mixer_frequency() -> int:
+    """Mixer sample rate — keep in sync with generated assets (44.1 kHz)."""
+    return 44100
+
+
 def mixer_buffer() -> int:
-    """Larger buffer is more stable on Android Bluetooth / weak devices / WASM."""
-    if is_web() or is_android():
+    """Larger buffer is more stable on Android Bluetooth / weak devices / WASM.
+
+    pygbag/WebAudio underruns with the pygame default (512) sound like crackle /
+    distortion; use a generous buffer on web and mobile.
+    """
+    if is_web():
+        return 8192
+    if is_android():
         return 4096
     return 512
 

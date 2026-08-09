@@ -13,11 +13,20 @@ import pygame
 import config
 from core import audio
 from core.input import InputManager
-from core.platform import apply_mobile_runtime_tweaks, create_display, is_web
+from core.platform import (
+    apply_mobile_runtime_tweaks,
+    create_display,
+    is_web,
+    mixer_buffer,
+    mixer_frequency,
+)
 from games.booth_blaster import LoadingScene
 
 
 async def main() -> None:
+    # Must run before pygame.init(): otherwise init opens the mixer with a
+    # 512-sample buffer and web/Android audio underruns (crackle/distortion).
+    pygame.mixer.pre_init(mixer_frequency(), -16, 2, mixer_buffer())
     pygame.init()
     apply_mobile_runtime_tweaks()
     audio.init()
