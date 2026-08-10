@@ -275,8 +275,8 @@ class Bolt:
     vy: float
     friendly: bool
     kind: str = "paw"  # "paw" | "treat" | "net"
-    w: int = 36
-    h: int = 36
+    w: int = _sx(36)
+    h: int = _sx(36)
 
     @property
     def rect(self) -> pygame.Rect:
@@ -326,8 +326,8 @@ class Barrier:
     y: float
     hp: int = 8
     max_hp: int = 8
-    w: int = 120
-    h: int = 72
+    w: int = _sx(120)
+    h: int = _sx(72)
     # Slot 0 = leftmost; keeps graffiti frames after other barriers despawn.
     slot: int = 0
 
