@@ -1247,7 +1247,35 @@ class LoadingScene:
         self._elapsed += dt
         # Tap/confirm skips splash early
         if self._elapsed >= self.DURATION or inp.confirm_pressed or inp.fire_pressed:
-            return TitleScene()
+            # #region agent log
+            try:
+                from core.debug_agent import agent_log
+                import time as _t
+
+                _t0 = _t.perf_counter()
+                agent_log(
+                    "H3",
+                    "LoadingScene.update",
+                    "creating TitleScene",
+                    {"elapsed": round(self._elapsed, 3), "confirm": bool(inp.confirm_pressed)},
+                )
+                _title = TitleScene()
+                agent_log(
+                    "H3",
+                    "LoadingScene.update",
+                    "TitleScene created",
+                    {"ms": round((_t.perf_counter() - _t0) * 1000, 1)},
+                )
+                return _title
+            except Exception as _exc:
+                try:
+                    from core.debug_agent import agent_log
+
+                    agent_log("H4", "LoadingScene.update", "TitleScene failed", {"err": repr(_exc)})
+                except Exception:
+                    pass
+                raise
+            # #endregion
         if inp.exit_ready:
             self.exit_requested = True
             return None
@@ -1277,6 +1305,16 @@ class TitleScene:
     _PHOENIX_RESTORE = 0.55
 
     def __init__(self) -> None:
+        # #region agent log
+        try:
+            from core.debug_agent import agent_log
+            import time as _t
+
+            _t0 = _t.perf_counter()
+            agent_log("H3", "TitleScene.__init__", "begin", {})
+        except Exception:
+            _t0 = 0.0
+        # #endregion
         self.idle_timer = 0.0
         self.exit_requested = False
         self._font: Optional[pygame.font.Font] = None
@@ -1302,20 +1340,98 @@ class TitleScene:
         self._skin_index = load_player_skin_index()
         self._skin_preview: Optional[pygame.Surface] = None
         self._skin_label = ""
+        # #region agent log
+        try:
+            from core.debug_agent import agent_log
+            import time as _t
+
+            agent_log(
+                "H3",
+                "TitleScene.__init__",
+                "end",
+                {"ms": round((_t.perf_counter() - _t0) * 1000, 1)},
+            )
+        except Exception:
+            pass
+        # #endregion
 
     def _ensure(self) -> None:
         if self._ready:
             return
+        # #region agent log
+        try:
+            from core.debug_agent import agent_log
+            import time as _t
+
+            _phase = self._load_phase
+            _t0 = _t.perf_counter()
+            agent_log("H2", "TitleScene._ensure", "phase start", {"phase": _phase})
+        except Exception:
+            _phase = self._load_phase
+            _t0 = 0.0
+        # #endregion
         # Phase 0: fonts only (cheap). Phase 1: sprites + music (heavier on WASM).
         if self._load_phase == 0:
             self._font = load_font(36)
             self._font_lg = load_font(72, bold=True)
             self._font_sm = load_font(28)
             self._load_phase = 1
+            # #region agent log
+            try:
+                from core.debug_agent import agent_log
+                import time as _t
+
+                agent_log(
+                    "H2",
+                    "TitleScene._ensure",
+                    "phase0 fonts done",
+                    {"ms": round((_t.perf_counter() - _t0) * 1000, 1)},
+                )
+            except Exception:
+                pass
+            # #endregion
             return
+        # #region agent log
+        try:
+            from core.debug_agent import agent_log
+            import time as _t
+
+            _t_spr = _t.perf_counter()
+        except Exception:
+            _t_spr = 0.0
+        # #endregion
         self._phoenix = _load_sprite("fx_phoenix.png", (280, 200), (255, 120, 40))
         self._reload_skin_preview()
+        # #region agent log
+        try:
+            from core.debug_agent import agent_log
+            import time as _t
+
+            agent_log(
+                "H2",
+                "TitleScene._ensure",
+                "sprites loaded",
+                {"ms": round((_t.perf_counter() - _t_spr) * 1000, 1)},
+            )
+            _t_mus = _t.perf_counter()
+        except Exception:
+            _t_mus = 0.0
+        # #endregion
         audio.play_music("title")
+        # #region agent log
+        try:
+            from core.debug_agent import agent_log
+            import time as _t
+
+            agent_log(
+                "H1",
+                "TitleScene._ensure",
+                "play_music returned",
+                {"ms": round((_t.perf_counter() - _t_mus) * 1000, 1)},
+            )
+        except Exception:
+            pass
+        # #endregion
         self._load_phase = 2
         self._ready = True
 

@@ -65,6 +65,24 @@ async def main() -> None:
             break
 
         if next_scene is not None and next_scene is not scene:
+            # #region agent log
+            try:
+                from core.debug_agent import agent_log
+
+                agent_log(
+                    "H4",
+                    "main.loop",
+                    "scene switch",
+                    {
+                        "from": type(scene).__name__,
+                        "to": type(next_scene).__name__,
+                        "web": is_web(),
+                        "elapsed": round(elapsed, 3),
+                    },
+                )
+            except Exception:
+                pass
+            # #endregion
             scene = next_scene
             # Let the browser breathe after splash→title / title→game switches.
             await asyncio.sleep(0)
@@ -83,7 +101,52 @@ async def main() -> None:
             await asyncio.sleep(0)
             continue
 
+        # #region agent log
+        try:
+            if type(scene).__name__ == "TitleScene" and elapsed < 8.0:
+                from core.debug_agent import agent_log
+
+                agent_log(
+                    "H5",
+                    "main.loop",
+                    "title frame before draw",
+                    {
+                        "ready": bool(getattr(scene, "_ready", False)),
+                        "phase": getattr(scene, "_load_phase", None),
+                        "grace": round(float(getattr(scene, "_enter_grace", 0.0)), 3),
+                        "elapsed": round(elapsed, 3),
+                    },
+                )
+        except Exception:
+            pass
+        # #endregion
         scene.draw(canvas)  # type: ignore[union-attr]
+        # #region agent log
+        try:
+            if type(scene).__name__ == "TitleScene" and elapsed < 8.0:
+                from core.debug_agent import agent_log
+
+                agent_log(
+                    "H5",
+                    "main.loop",
+                    "title frame after draw",
+                    {
+                        "ready": bool(getattr(scene, "_ready", False)),
+                        "phase": getattr(scene, "_load_phase", None),
+                    },
+                )
+            elif type(scene).__name__ == "LoadingScene" and getattr(scene, "_elapsed", 0) > 2.0:
+                from core.debug_agent import agent_log
+
+                agent_log(
+                    "H4",
+                    "main.loop",
+                    "still on LoadingScene late",
+                    {"splash_elapsed": round(float(getattr(scene, "_elapsed", 0.0)), 3)},
+                )
+        except Exception:
+            pass
+        # #endregion
         if screen.get_size() != canvas.get_size():
             # Prefer nearest on web — smoothscale every frame is expensive.
             if is_web():

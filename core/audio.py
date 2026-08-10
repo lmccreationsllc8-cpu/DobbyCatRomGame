@@ -244,15 +244,66 @@ def _start_music(name: str, loop: bool) -> None:
     path = _resolve_audio_file(filename)
     if path is None:
         return
+    # #region agent log
+    try:
+        from core.debug_agent import agent_log
+        import time as _t
+
+        _t0 = _t.perf_counter()
+        agent_log(
+            "H1",
+            "audio._start_music",
+            "before load",
+            {"name": name, "path": str(path), "web": is_web()},
+        )
+    except Exception:
+        _t0 = 0.0
+    # #endregion
     try:
         pygame.mixer.music.load(str(path))
+        # #region agent log
+        try:
+            from core.debug_agent import agent_log
+            import time as _t
+
+            agent_log(
+                "H1",
+                "audio._start_music",
+                "after load",
+                {"ms": round((_t.perf_counter() - _t0) * 1000, 1)},
+            )
+        except Exception:
+            pass
+        # #endregion
         music_v = 0.0 if _settings.muted else _settings.music_volume * _output_headroom()
         pygame.mixer.music.set_volume(music_v)
         pygame.mixer.music.play(-1 if loop else 0)
         _music_current = name
         if _settings.muted:
             pygame.mixer.music.pause()
-    except pygame.error:
+        # #region agent log
+        try:
+            from core.debug_agent import agent_log
+            import time as _t
+
+            agent_log(
+                "H1",
+                "audio._start_music",
+                "after play",
+                {"ms": round((_t.perf_counter() - _t0) * 1000, 1)},
+            )
+        except Exception:
+            pass
+        # #endregion
+    except pygame.error as exc:
+        # #region agent log
+        try:
+            from core.debug_agent import agent_log
+
+            agent_log("H1", "audio._start_music", "pygame.error", {"err": repr(exc)})
+        except Exception:
+            pass
+        # #endregion
         pass
 
 
