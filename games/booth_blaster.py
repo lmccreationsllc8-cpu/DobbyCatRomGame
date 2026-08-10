@@ -1324,6 +1324,7 @@ class TitleScene:
         # Spread title asset work across frames so WASM does not freeze after splash.
         self._load_phase = 0
         self._enter_grace = 0.45
+        self._music_started = False
         self.next_scene: Optional[BoothBlaster] = None
         self._audio_panel = AudioPanel((WIDTH - 36, 36), scale=1.15)
         self._block_confirm = True
@@ -1370,7 +1371,8 @@ class TitleScene:
             _phase = self._load_phase
             _t0 = 0.0
         # #endregion
-        # Phase 0: fonts only (cheap). Phase 1: sprites + music (heavier on WASM).
+        # Phase 0: fonts. Phase 1: sprites only. Music is deferred (H1) so
+        # music.load cannot stall the first frame after splash on WASM/Safari.
         if self._load_phase == 0:
             self._font = load_font(36)
             self._font_lg = load_font(72, bold=True)
@@ -1391,49 +1393,35 @@ class TitleScene:
                 pass
             # #endregion
             return
-        # #region agent log
-        try:
-            from core.debug_agent import agent_log
-            import time as _t
+        if self._load_phase == 1:
+            # #region agent log
+            try:
+                from core.debug_agent import agent_log
+                import time as _t
 
-            _t_spr = _t.perf_counter()
-        except Exception:
-            _t_spr = 0.0
-        # #endregion
-        self._phoenix = _load_sprite("fx_phoenix.png", (280, 200), (255, 120, 40))
-        self._reload_skin_preview()
-        # #region agent log
-        try:
-            from core.debug_agent import agent_log
-            import time as _t
+                _t_spr = _t.perf_counter()
+            except Exception:
+                _t_spr = 0.0
+            # #endregion
+            self._phoenix = _load_sprite("fx_phoenix.png", (280, 200), (255, 120, 40))
+            self._reload_skin_preview()
+            # #region agent log
+            try:
+                from core.debug_agent import agent_log
+                import time as _t
 
-            agent_log(
-                "H2",
-                "TitleScene._ensure",
-                "sprites loaded",
-                {"ms": round((_t.perf_counter() - _t_spr) * 1000, 1)},
-            )
-            _t_mus = _t.perf_counter()
-        except Exception:
-            _t_mus = 0.0
-        # #endregion
-        audio.play_music("title")
-        # #region agent log
-        try:
-            from core.debug_agent import agent_log
-            import time as _t
-
-            agent_log(
-                "H1",
-                "TitleScene._ensure",
-                "play_music returned",
-                {"ms": round((_t.perf_counter() - _t_mus) * 1000, 1)},
-            )
-        except Exception:
-            pass
-        # #endregion
-        self._load_phase = 2
-        self._ready = True
+                agent_log(
+                    "H2",
+                    "TitleScene._ensure",
+                    "sprites loaded",
+                    {"ms": round((_t.perf_counter() - _t_spr) * 1000, 1)},
+                )
+            except Exception:
+                pass
+            # #endregion
+            self._load_phase = 2
+            self._ready = True
+            return
 
     def _reload_skin_preview(self) -> None:
         name = player_skin_filename(self._skin_index)
@@ -1575,6 +1563,35 @@ class TitleScene:
             self._enter_grace = max(0.0, self._enter_grace - dt)
             self._block_confirm = True
             return self
+        # Start title music only after the menu has drawn and grace elapsed.
+        # Keeps music.load off the splash→title handoff frame (WASM freeze).
+        if not self._music_started:
+            self._music_started = True
+            # #region agent log
+            try:
+                from core.debug_agent import agent_log
+                import time as _t
+
+                _t0 = _t.perf_counter()
+                agent_log("H1", "TitleScene.update", "deferred play_music begin", {})
+            except Exception:
+                _t0 = 0.0
+            # #endregion
+            audio.play_music("title")
+            # #region agent log
+            try:
+                from core.debug_agent import agent_log
+                import time as _t
+
+                agent_log(
+                    "H1",
+                    "TitleScene.update",
+                    "deferred play_music end",
+                    {"ms": round((_t.perf_counter() - _t0) * 1000, 1)},
+                )
+            except Exception:
+                pass
+            # #endregion
 
         # Phoenix burn sequence: ignore start confirm; keep kiosk idle from firing.
         if self._phoenix_active:
@@ -1652,8 +1669,8 @@ class TitleScene:
         tip = self._font.render(tip_text, True, OK)
         tip2 = self._font.render(tip2_text, True, HUD_COLOR)
         tip3 = self._font.render(tip3_text, True, HUD_COLOR)
-        tip4 = self._font.render("M mute · [ ] music · , . sfx", True, HUD_COLOR)
-        tip5 = self._font_sm.render("Left/Right — cycle Dobby skin", True, HUD_COLOR)
+        tip4 = self._font.render("M mute - [ ] music - , . sfx", True, HUD_COLOR)
+        tip5 = self._font_sm.render("Left/Right - cycle Dobby skin", True, HUD_COLOR)
         surface.blit(title, title.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 420)))
         surface.blit(sub, sub.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 340)))
         surface.blit(tip, tip.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 260)))
