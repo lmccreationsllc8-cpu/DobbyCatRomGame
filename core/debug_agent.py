@@ -39,14 +39,16 @@ def agent_log(
             fh.write(line + "\n")
     except Exception:
         pass
+    text = f"[agent:{hypothesis_id}] {location} | {message} | {data or {}}"
     try:
-        print(f"[agent:{hypothesis_id}] {location} | {message} | {data or {}}", flush=True)
+        print(text, flush=True)
     except Exception:
         pass
-    # Browser → local debug ingest (same machine only).
+    # Browser: write to JS console (CDP can see this) + local ingest.
     try:
         import platform as _plat
 
+        _plat.window.console.log(text)
         body = json.dumps(payload)
         _plat.window.fetch(
             _INGEST,
