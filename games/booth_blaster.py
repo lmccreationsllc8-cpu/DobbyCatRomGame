@@ -395,7 +395,18 @@ class BoothBlaster:
         self._block_fire = False
         self._spawn_barriers()
         self._spawn_wave(self.wave.index)
-        audio.play_music("game")
+        # Web/Safari: never start music inside the constructor — mixer.load can
+        # stall the splash→game handoff. Main loop starts it after first yield.
+        self._game_music_started = False
+        try:
+            from core.platform import is_web
+
+            if not is_web():
+                audio.play_music("game")
+                self._game_music_started = True
+        except Exception:
+            audio.play_music("game")
+            self._game_music_started = True
 
     def assets_loading(self) -> bool:
         return not self._assets_ready
@@ -694,6 +705,33 @@ class BoothBlaster:
 
     def update(self, dt: float, inp: InputState) -> Optional[object]:
         self._ensure_assets()
+        if not getattr(self, "_game_music_started", True):
+            # #region agent log
+            try:
+                from core.debug_agent import agent_log
+                import time as _t
+
+                _t0 = _t.perf_counter()
+                agent_log("H8", "BoothBlaster.update", "play_music game begin", {})
+            except Exception:
+                _t0 = 0.0
+            # #endregion
+            audio.play_music("game")
+            self._game_music_started = True
+            # #region agent log
+            try:
+                from core.debug_agent import agent_log
+                import time as _t
+
+                agent_log(
+                    "H8",
+                    "BoothBlaster.update",
+                    "play_music game end",
+                    {"ms": round((_t.perf_counter() - _t0) * 1000, 1)},
+                )
+            except Exception:
+                pass
+            # #endregion
         if not self._assets_ready:
             return self
 
@@ -1140,7 +1178,7 @@ class BoothBlaster:
         surface.blit(title, title.get_rect(center=(WIDTH // 2, top_y)))
         entries = leaderboard.load_scores()
         if not entries:
-            empty = self._font.render("No scores yet — be the first!", True, HUD_COLOR)
+            empty = self._font.render("No scores yet - be the first!", True, HUD_COLOR)
             surface.blit(empty, empty.get_rect(center=(WIDTH // 2, top_y + 60)))
             return
         y = top_y + 50
@@ -1252,19 +1290,61 @@ class LoadingScene:
                 from core.debug_agent import agent_log
                 import time as _t
 
+                _gestured = bool(inp.confirm_pressed or inp.fire_pressed)
                 _t0 = _t.perf_counter()
                 agent_log(
                     "H3",
                     "LoadingScene.update",
                     "creating TitleScene",
-                    {"elapsed": round(self._elapsed, 3), "confirm": bool(inp.confirm_pressed)},
+                    {
+                        "elapsed": round(self._elapsed, 3),
+                        "confirm": bool(inp.confirm_pressed),
+                        "gestured": _gestured,
+                    },
                 )
-                _title = TitleScene()
+                _title = TitleScene(allow_music=_gestured)
+                # Web: skip title music on the splash handoff frame. pygame mixer
+                # load/play has stalled Safari/WASM here even after a tap; title
+                # music starts later from TitleScene after the menu is up.
+                try:
+                    from core.platform import is_web as _is_web
+
+                    _web = _is_web()
+                except Exception:
+                    _web = False
+                if _gestured and not _web:
+                    try:
+                        import time as _t2
+
+                        _tm0 = _t2.perf_counter()
+                        agent_log("H10", "LoadingScene.update", "gesture play_music begin", {})
+                        audio.play_music("title")
+                        _title._music_started = True
+                        agent_log(
+                            "H10",
+                            "LoadingScene.update",
+                            "gesture play_music end",
+                            {"ms": round((_t2.perf_counter() - _tm0) * 1000, 1)},
+                        )
+                    except Exception as _mexc:
+                        agent_log(
+                            "H10",
+                            "LoadingScene.update",
+                            "gesture play_music failed",
+                            {"err": repr(_mexc)},
+                        )
+                elif _web:
+                    agent_log(
+                        "H10",
+                        "LoadingScene.update",
+                        "web skip music on splash handoff",
+                        {"gestured": _gestured},
+                    )
                 agent_log(
                     "H3",
                     "LoadingScene.update",
                     "TitleScene created",
-                    {"ms": round((_t.perf_counter() - _t0) * 1000, 1)},
+                    {"ms": round((_t.perf_counter() - _t0) * 1000, 1), "allow_music": _gestured},
                 )
                 return _title
             except Exception as _exc:
@@ -1304,14 +1384,14 @@ class TitleScene:
     _PHOENIX_HOLD = 0.35
     _PHOENIX_RESTORE = 0.55
 
-    def __init__(self) -> None:
+    def __init__(self, allow_music: bool = False) -> None:
         # #region agent log
         try:
             from core.debug_agent import agent_log
             import time as _t
 
             _t0 = _t.perf_counter()
-            agent_log("H3", "TitleScene.__init__", "begin", {})
+            agent_log("H3", "TitleScene.__init__", "begin", {"allow_music": bool(allow_music)})
         except Exception:
             _t0 = 0.0
         # #endregion
@@ -1325,6 +1405,10 @@ class TitleScene:
         self._load_phase = 0
         self._enter_grace = 0.45
         self._music_started = False
+        # Web/Safari: only start music after a real user gesture (splash tap or later).
+        self._allow_music = bool(allow_music)
+        self._title_static: Optional[pygame.Surface] = None
+        self._title_static_skin = -1
         self.next_scene: Optional[BoothBlaster] = None
         self._audio_panel = AudioPanel((WIDTH - 36, 36), scale=1.15)
         self._block_confirm = True
@@ -1434,6 +1518,7 @@ class TitleScene:
         self._skin_index = (self._skin_index + int(delta)) % len(PLAYER_SKINS)
         save_player_skin_index(self._skin_index)
         self._reload_skin_preview()
+        self._title_static = None
         audio.play("ui_blip")
         self.idle_timer = 0.0
         self._block_confirm = True
@@ -1563,31 +1648,47 @@ class TitleScene:
             self._enter_grace = max(0.0, self._enter_grace - dt)
             self._block_confirm = True
             return self
-        # Start title music only after the menu has drawn and grace elapsed.
-        # Keeps music.load off the splash→title handoff frame (WASM freeze).
-        if not self._music_started:
+        # Unlock music on any post-splash gesture (required on Safari/WebAudio).
+        if inp.any_activity or inp.confirm_pressed or inp.fire_pressed:
+            self._allow_music = True
+        # H10: title music only after menu is ready + a user gesture.
+        # Web experiment: skip title BGM entirely — mixer load/play after splash
+        # has been implicated in Safari/WASM freezes; SFX/game music still work.
+        if not self._music_started and self._allow_music and not inp.confirm_pressed:
             self._music_started = True
+            try:
+                from core.platform import is_web as _is_web
+
+                _web = _is_web()
+            except Exception:
+                _web = False
             # #region agent log
             try:
                 from core.debug_agent import agent_log
                 import time as _t
 
                 _t0 = _t.perf_counter()
-                agent_log("H1", "TitleScene.update", "deferred play_music begin", {})
+                agent_log(
+                    "H10",
+                    "TitleScene.update",
+                    "web skip title music" if _web else "gesture play_music begin",
+                    {"web": _web},
+                )
             except Exception:
                 _t0 = 0.0
             # #endregion
-            audio.play_music("title")
+            if not _web:
+                audio.play_music("title")
             # #region agent log
             try:
                 from core.debug_agent import agent_log
                 import time as _t
 
                 agent_log(
-                    "H1",
+                    "H10",
                     "TitleScene.update",
-                    "deferred play_music end",
-                    {"ms": round((_t.perf_counter() - _t0) * 1000, 1)},
+                    "gesture play_music end",
+                    {"ms": round((_t.perf_counter() - _t0) * 1000, 1), "web": _web},
                 )
             except Exception:
                 pass
@@ -1657,12 +1758,36 @@ class TitleScene:
             return None
         if inp.confirm_pressed:
             audio.play("ui_confirm")
-            return BoothBlaster(from_title=True)
+            # #region agent log
+            try:
+                from core.debug_agent import agent_log
+                import time as _t
+
+                _t0 = _t.perf_counter()
+                agent_log("H8", "TitleScene.update", "creating BoothBlaster", {})
+                _game = BoothBlaster(from_title=True)
+                agent_log(
+                    "H8",
+                    "TitleScene.update",
+                    "BoothBlaster created",
+                    {"ms": round((_t.perf_counter() - _t0) * 1000, 1)},
+                )
+                return _game
+            except Exception as _exc:
+                try:
+                    from core.debug_agent import agent_log
+
+                    agent_log("H8", "TitleScene.update", "BoothBlaster failed", {"err": repr(_exc)})
+                except Exception:
+                    pass
+                raise
+            # #endregion
         return self
 
-    def _draw_title_base(self, surface: pygame.Surface) -> None:
+    def _rebuild_title_static(self) -> None:
+        """Cache expensive font/leaderboard blits (H7: first full title draw hitch)."""
         assert self._font and self._font_lg and self._font_sm
-        BoothBlaster._draw_gradient_bg(surface)
+        layer = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
         title = self._font_lg.render("BOOTH BLASTER", True, ACCENT)
         sub = self._font.render("Laser Monkey vs the Con Crowd", True, HUD_COLOR)
         tip_text, tip2_text, tip3_text = control_prompt_lines("Start")
@@ -1671,33 +1796,70 @@ class TitleScene:
         tip3 = self._font.render(tip3_text, True, HUD_COLOR)
         tip4 = self._font.render("M mute - [ ] music - , . sfx", True, HUD_COLOR)
         tip5 = self._font_sm.render("Left/Right - cycle Dobby skin", True, HUD_COLOR)
-        surface.blit(title, title.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 420)))
-        surface.blit(sub, sub.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 340)))
-        surface.blit(tip, tip.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 260)))
-        surface.blit(tip2, tip2.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 210)))
-        surface.blit(tip3, tip3.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 160)))
-        surface.blit(tip4, tip4.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 110)))
-        surface.blit(tip5, tip5.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 60)))
+        layer.blit(title, title.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 420)))
+        layer.blit(sub, sub.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 340)))
+        layer.blit(tip, tip.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 260)))
+        layer.blit(tip2, tip2.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 210)))
+        layer.blit(tip3, tip3.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 160)))
+        layer.blit(tip4, tip4.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 110)))
+        layer.blit(tip5, tip5.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 60)))
 
-        self._audio_panel.draw(surface)
-
-        # Reuse leaderboard renderer
         dummy = BoothBlaster.__new__(BoothBlaster)
         dummy._font = self._font
         dummy._font_lg = self._font_lg
-        BoothBlaster._draw_leaderboard(dummy, surface, HEIGHT // 2 - 20)
+        BoothBlaster._draw_leaderboard(dummy, layer, HEIGHT // 2 - 20)
 
         left, preview, right = self._skin_hit_rects()
         if self._skin_preview is not None:
-            surface.blit(self._skin_preview, preview)
-        pygame.draw.rect(surface, ACCENT, left, border_radius=12)
-        pygame.draw.rect(surface, ACCENT, right, border_radius=12)
+            layer.blit(self._skin_preview, preview)
+        pygame.draw.rect(layer, ACCENT, left, border_radius=12)
+        pygame.draw.rect(layer, ACCENT, right, border_radius=12)
         left_lbl = self._font_lg.render("<", True, HUD_COLOR)
         right_lbl = self._font_lg.render(">", True, HUD_COLOR)
-        surface.blit(left_lbl, left_lbl.get_rect(center=left.center))
-        surface.blit(right_lbl, right_lbl.get_rect(center=right.center))
+        layer.blit(left_lbl, left_lbl.get_rect(center=left.center))
+        layer.blit(right_lbl, right_lbl.get_rect(center=right.center))
         skin_name = self._font_sm.render(self._skin_label, True, OK)
-        surface.blit(skin_name, skin_name.get_rect(center=(WIDTH // 2, preview.bottom + 28)))
+        layer.blit(skin_name, skin_name.get_rect(center=(WIDTH // 2, preview.bottom + 28)))
+        self._title_static = layer
+        self._title_static_skin = self._skin_index
+
+    def _draw_title_base(self, surface: pygame.Surface) -> None:
+        assert self._font and self._font_lg and self._font_sm
+        # #region agent log
+        try:
+            from core.debug_agent import agent_log
+            import time as _t
+
+            _t0 = _t.perf_counter()
+            _rebuild = self._title_static is None or self._title_static_skin != self._skin_index
+        except Exception:
+            _t0 = 0.0
+            _rebuild = self._title_static is None or self._title_static_skin != self._skin_index
+        # #endregion
+        BoothBlaster._draw_gradient_bg(surface)
+        if _rebuild:
+            self._rebuild_title_static()
+        if self._title_static is not None:
+            surface.blit(self._title_static, (0, 0))
+        self._audio_panel.draw(surface)
+        # #region agent log
+        try:
+            from core.debug_agent import agent_log
+            import time as _t
+
+            agent_log(
+                "H7",
+                "TitleScene._draw_title_base",
+                "draw done",
+                {
+                    "ms": round((_t.perf_counter() - _t0) * 1000, 1),
+                    "rebuilt": bool(_rebuild),
+                },
+                min_interval_ms=500,
+            )
+        except Exception:
+            pass
+        # #endregion
 
     def _burn_alpha(self) -> float:
         """0..1 opacity of scorch overlay during the phoenix sequence."""

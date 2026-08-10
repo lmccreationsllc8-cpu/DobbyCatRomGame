@@ -114,8 +114,10 @@ async def main() -> None:
                         "ready": bool(getattr(scene, "_ready", False)),
                         "phase": getattr(scene, "_load_phase", None),
                         "grace": round(float(getattr(scene, "_enter_grace", 0.0)), 3),
+                        "music": bool(getattr(scene, "_music_started", False)),
                         "elapsed": round(elapsed, 3),
                     },
+                    min_interval_ms=250,
                 )
         except Exception:
             pass
@@ -134,6 +136,7 @@ async def main() -> None:
                         "ready": bool(getattr(scene, "_ready", False)),
                         "phase": getattr(scene, "_load_phase", None),
                     },
+                    min_interval_ms=250,
                 )
             elif type(scene).__name__ == "LoadingScene" and getattr(scene, "_elapsed", 0) > 2.0:
                 from core.debug_agent import agent_log
@@ -143,6 +146,7 @@ async def main() -> None:
                     "main.loop",
                     "still on LoadingScene late",
                     {"splash_elapsed": round(float(getattr(scene, "_elapsed", 0.0)), 3)},
+                    min_interval_ms=400,
                 )
         except Exception:
             pass
