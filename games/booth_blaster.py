@@ -454,11 +454,11 @@ class BoothBlaster:
             self._asset_phase = 3
             return True
         if self._asset_phase == 3:
-            # Pre-decode fight SFX so wave-clear / boss spawn do not hitch on WASM.
+            # Pre-decode fight SFX so wave-clear / boss spawn do not hitch.
             try:
-                from core.platform import is_web
+                from core.platform import is_android, is_web
 
-                if is_web():
+                if is_web() or is_android():
                     audio.preload_sfx(
                         "wave_clear",
                         "boss_incoming",
@@ -667,10 +667,16 @@ class BoothBlaster:
             import time as _t
 
             _t0 = _t.perf_counter()
-            agent_log("H11", "BoothBlaster._spawn_boss", "audio begin", {"wave": wave})
+            agent_log(
+                "H11",
+                "BoothBlaster._spawn_boss",
+                "audio begin",
+                {"wave": wave, "enemies": len(self.enemies)},
+            )
         except Exception:
             _t0 = 0.0
         # #endregion
+        # BGM swap is a no-op on web/Android (see audio.play_music); SFX only here.
         audio.play_music("boss")
         audio.play("boss_incoming")
         # #region agent log
@@ -682,7 +688,14 @@ class BoothBlaster:
                 "H11",
                 "BoothBlaster._spawn_boss",
                 "audio end",
-                {"wave": wave, "ms": round((_t.perf_counter() - _t0) * 1000, 1)},
+                {
+                    "wave": wave,
+                    "ms": round((_t.perf_counter() - _t0) * 1000, 1),
+                    "sprite": f"enemy_{self.enemies[0].kind.name.lower()}" if self.enemies else None,
+                    "has_sprite": bool(
+                        self.enemies and self._sprites.get(self.enemies[0].draw_key())
+                    ),
+                },
             )
         except Exception:
             pass
@@ -780,6 +793,26 @@ class BoothBlaster:
             # #endregion
         if not self._assets_ready:
             return self
+
+        # Debug: ?spawn=boss jumps straight to wave-1 boss after assets load.
+        if not getattr(self, "_debug_boss_jumped", False):
+            try:
+                from core.platform import is_web
+                import platform as _plat
+
+                if is_web() and "spawn=boss" in str(getattr(_plat.window.location, "search", "") or ""):
+                    self._debug_boss_jumped = True
+                    # #region agent log
+                    try:
+                        from core.debug_agent import agent_log
+
+                        agent_log("H12", "BoothBlaster.update", "debug spawn=boss", {})
+                    except Exception:
+                        pass
+                    # #endregion
+                    self._spawn_boss()
+            except Exception:
+                self._debug_boss_jumped = True
 
         if inp.any_activity:
             self.idle_timer = 0.0
@@ -1151,7 +1184,18 @@ class BoothBlaster:
 
         # Enemies
         for e in self.enemies:
-            spr = self._sprites[e.draw_key()]
+            key = e.draw_key()
+            spr = self._sprites.get(key)
+            if spr is None:
+                # #region agent log
+                try:
+                    from core.debug_agent import agent_log
+
+                    agent_log("H12", "BoothBlaster.draw", "missing enemy sprite", {"key": key})
+                except Exception:
+                    pass
+                # #endregion
+                continue
             surface.blit(spr, spr.get_rect(center=(int(e.x), int(e.y))))
 
         # Player

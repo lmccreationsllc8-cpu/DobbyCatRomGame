@@ -58,7 +58,23 @@ async def main() -> None:
 
         inp = inputs.poll(dt)
         audio.tick(dt)
-        next_scene = scene.update(dt, inp)  # type: ignore[union-attr]
+        try:
+            next_scene = scene.update(dt, inp)  # type: ignore[union-attr]
+        except Exception as _exc:
+            # #region agent log
+            try:
+                from core.debug_agent import agent_log
+
+                agent_log(
+                    "H15",
+                    "main.loop",
+                    "update exception",
+                    {"err": repr(_exc), "scene": type(scene).__name__},
+                )
+            except Exception:
+                pass
+            # #endregion
+            raise
 
         if getattr(scene, "exit_requested", False):
             running = False
@@ -122,12 +138,28 @@ async def main() -> None:
         except Exception:
             pass
         # #endregion
-        scene.draw(canvas)  # type: ignore[union-attr]
-        # #region agent log
         try:
-            if type(scene).__name__ == "TitleScene" and elapsed < 8.0:
+            scene.draw(canvas)  # type: ignore[union-attr]
+        except Exception as _exc:
+            # #region agent log
+            try:
                 from core.debug_agent import agent_log
 
+                agent_log(
+                    "H15",
+                    "main.loop",
+                    "draw exception",
+                    {"err": repr(_exc), "scene": type(scene).__name__},
+                )
+            except Exception:
+                pass
+            # #endregion
+            raise
+        # #region agent log
+        try:
+            from core.debug_agent import agent_log
+
+            if type(scene).__name__ == "TitleScene" and elapsed < 8.0:
                 agent_log(
                     "H5",
                     "main.loop",
@@ -139,14 +171,28 @@ async def main() -> None:
                     min_interval_ms=250,
                 )
             elif type(scene).__name__ == "LoadingScene" and getattr(scene, "_elapsed", 0) > 2.0:
-                from core.debug_agent import agent_log
-
                 agent_log(
                     "H4",
                     "main.loop",
                     "still on LoadingScene late",
                     {"splash_elapsed": round(float(getattr(scene, "_elapsed", 0.0)), 3)},
                     min_interval_ms=400,
+                )
+            elif type(scene).__name__ == "BoothBlaster":
+                agent_log(
+                    "H12",
+                    "main.loop",
+                    "game heartbeat",
+                    {
+                        "elapsed": round(elapsed, 2),
+                        "wave": getattr(getattr(scene, "wave", None), "index", None),
+                        "boss": bool(getattr(getattr(scene, "wave", None), "boss_active", False)),
+                        "pending": bool(getattr(getattr(scene, "wave", None), "boss_pending", False)),
+                        "flash": round(float(getattr(scene, "won_wave_flash", 0.0) or 0.0), 2),
+                        "enemies": len(getattr(scene, "enemies", []) or []),
+                        "ready": bool(getattr(scene, "_assets_ready", False)),
+                    },
+                    min_interval_ms=500,
                 )
         except Exception:
             pass
