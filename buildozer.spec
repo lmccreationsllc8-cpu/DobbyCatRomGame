@@ -27,7 +27,7 @@ source.exclude_dirs = tests,bin,venv,.venv,.buildozer,.git,.github,.cursor,tools
 source.exclude_patterns = assets/reference/*,assets/reference/**/*,p4a-recipes/*,p4a-recipes/**/*,_*,debug-*.log,_apk_*,_apk_*/*
 
 # (str) Application versioning (method 1)
-version = 0.1.10
+version = 0.1.11
 
 # (list) Application requirements — no numpy/Pillow in the APK
 requirements = hostpython3==3.11.11,python3==3.11.11,pygame-ce

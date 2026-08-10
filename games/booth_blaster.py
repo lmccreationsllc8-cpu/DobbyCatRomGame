@@ -72,7 +72,10 @@ PLAYER_SKINS = (
     "player_dobby_pickle.png",
     "player_dobby_octopus.png",
     "player_dobby_hi_vis.png",
+    # Last: sightseeing / practice — infinite lives, no leaderboard.
+    "player_dobby_thriller.png",
 )
+PRACTICE_SKINS = frozenset({"player_dobby_thriller.png"})
 _SKIN_STORE = "player_skin.txt"
 
 CAMPAIGN_WAVES = 4
@@ -176,6 +179,11 @@ def player_skin_filename(index: Optional[int] = None) -> str:
     if not PLAYER_SKINS:
         return "player_dobby.png"
     return PLAYER_SKINS[idx % len(PLAYER_SKINS)]
+
+
+def is_practice_skin(index: Optional[int] = None) -> bool:
+    """True for sightseeing skins: infinite lives, scores never board."""
+    return player_skin_filename(index) in PRACTICE_SKINS
 
 PILLOW_FLY_Y = 180.0 * SCALE
 PILLOW_SPEED = 160.0 * SCALE
@@ -1172,13 +1180,15 @@ class BoothBlaster:
     def _player_hit(self, bolt_kind: str = "paw") -> None:
         if self.player.invuln > 0:
             return
-        self.player.lives -= 1
+        practice = is_practice_skin()
+        if not practice:
+            self.player.lives -= 1
         self.player.invuln = 1.5
         if bolt_kind == "net":
             self.player.slow_timer = NET_SLOW_DURATION
         self.bolts = [b for b in self.bolts if b.friendly]
         audio.play("player_hurt")
-        if self.player.lives <= 0:
+        if not practice and self.player.lives <= 0:
             self.game_over = True
             self.campaign_won = False
             audio.play("game_over")
@@ -1190,7 +1200,8 @@ class BoothBlaster:
         self._initials = ["A", "A", "A"]
         self._initial_idx = 0
         self._letter_cooldown = 0.0
-        self._entering_score = leaderboard.qualifies(self.score)
+        # Practice / sightseeing skins never post to the board.
+        self._entering_score = (not is_practice_skin()) and leaderboard.qualifies(self.score)
         self._initials_picker = (
             InitialsPicker(center=(WIDTH // 2, HEIGHT // 2 + _sx(280)), width=920)
             if self._entering_score
@@ -1199,6 +1210,12 @@ class BoothBlaster:
         self._block_fire = False
 
     def _submit_initials(self) -> None:
+        if is_practice_skin():
+            self._score_saved = True
+            self._entering_score = False
+            self._initials_picker = None
+            audio.play("ui_confirm")
+            return
         name = "".join(self._initials)
         leaderboard.submit(name, self.score, self.wave.index)
         self._score_saved = True
@@ -1344,7 +1361,8 @@ class BoothBlaster:
             surface.blit(spr, spr.get_rect(center=(int(b.x), int(b.y))))
 
         # HUD (cache font renders — WASM font.render every frame is costly)
-        hud = f"SCORE {self.score:05d}   LIVES {self.player.lives}   WAVE {self.wave.index}/{CAMPAIGN_WAVES}"
+        lives_txt = "INF" if is_practice_skin() else str(self.player.lives)
+        hud = f"SCORE {self.score:05d}   LIVES {lives_txt}   WAVE {self.wave.index}/{CAMPAIGN_WAVES}"
         if getattr(self, "_hud_key", None) != hud:
             self._hud_key = hud
             self._hud_surf = self._font.render(hud, True, HUD_COLOR)
@@ -1739,7 +1757,10 @@ class TitleScene:
     def _reload_skin_preview(self) -> None:
         name = player_skin_filename(self._skin_index)
         self._skin_preview = _load_sprite(name, (_sx(180), _sx(180)), (180, 120, 70))
-        self._skin_label = name.replace("player_dobby_", "").replace(".png", "").replace("_", " ").upper()
+        label = name.replace("player_dobby_", "").replace(".png", "").replace("_", " ").upper()
+        if name in PRACTICE_SKINS:
+            label = f"{label}  INF"
+        self._skin_label = label
 
     def _cycle_skin(self, delta: int) -> None:
         if not PLAYER_SKINS:

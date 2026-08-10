@@ -30,6 +30,7 @@ NAMES = [
     "player_dobby_hoodie_green.png",
     "player_dobby_octopus.png",
     "player_dobby_pickle.png",
+    "player_dobby_thriller.png",
     "enemy_boss_nana.png",
     "enemy_boss_parent_a.png",
     "enemy_boss_parent_b.png",

@@ -12,9 +12,11 @@ from games.booth_blaster import (
     BoothBlaster,
     Bolt,
     PLAYER_SKINS,
+    PRACTICE_SKINS,
     _PARENT_KINDS,
     boss_shoot_rate,
     boss_step_interval,
+    is_practice_skin,
     load_player_skin_index,
     player_skin_filename,
     save_player_skin_index,
@@ -87,6 +89,25 @@ class CampaignBossTests(unittest.TestCase):
         self.assertIn("player_dobby_ugly.png", PLAYER_SKINS)
         self.assertIn("player_dobby_cute.png", PLAYER_SKINS)
         self.assertIn("player_dobby_pickle.png", PLAYER_SKINS)
+        self.assertEqual(PLAYER_SKINS[-1], "player_dobby_thriller.png")
+        self.assertIn("player_dobby_thriller.png", PRACTICE_SKINS)
+
+    def test_practice_skin_infinite_lives_and_no_board(self) -> None:
+        from unittest import mock
+
+        practice_idx = PLAYER_SKINS.index("player_dobby_thriller.png")
+        with mock.patch("games.booth_blaster.load_player_skin_index", return_value=practice_idx):
+            self.assertTrue(is_practice_skin())
+            game = BoothBlaster(from_title=False)
+            game.player.lives = 1
+            game.player.invuln = 0.0
+            game._player_hit("paw")
+            self.assertEqual(game.player.lives, 1)
+            self.assertFalse(game.game_over)
+            game.score = 99999
+            game._begin_score_entry()
+            self.assertFalse(game._entering_score)
+            self.assertIsNone(game._initials_picker)
 
     def test_boss_difficulty_ramps_between_waves(self) -> None:
         # ~12.5% faster / hotter each solo-boss wave.
