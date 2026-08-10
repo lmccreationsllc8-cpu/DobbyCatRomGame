@@ -307,6 +307,14 @@ def _start_music(name: str, loop: bool) -> None:
         pass
 
 
+def preload_sfx(*keys: str) -> None:
+    """Decode selected SFX now (use during chunked web asset load)."""
+    if not _initialized:
+        return
+    for key in keys:
+        _load_sound(key)
+
+
 def play_music(name: str, loop: bool = True) -> None:
     """Start looping background music by key (title/game/boss)."""
     global _music_current, _pending_music, _music_fade_remaining
@@ -316,6 +324,25 @@ def play_music(name: str, loop: bool = True) -> None:
         return
     if _music_current == name and _pending_music is None and pygame.mixer.music.get_busy():
         _apply_volumes()
+        return
+    # Web/WASM: never swap BGM after the first track. music.load() of the next
+    # OGG on the main thread freezes the tab (seen at first-boss handoff).
+    if is_web() and _music_current is not None and _music_current != name:
+        # #region agent log
+        try:
+            from core.debug_agent import agent_log
+
+            agent_log(
+                "H11",
+                "audio.play_music",
+                "web skip BGM swap",
+                {"from": _music_current, "to": name},
+            )
+        except Exception:
+            pass
+        # #endregion
+        _pending_music = None
+        _music_fade_remaining = 0.0
         return
     # Soft-cut on mobile/web to avoid crackle from hard load() swaps.
     soft = is_web() or is_android()
@@ -343,6 +370,24 @@ def tick(dt: float) -> None:
     global _pending_music, _music_fade_remaining
     if _pending_music is None:
         return
+    # Web must not complete a deferred load either (same freeze as play_music).
+    if is_web():
+        # #region agent log
+        try:
+            from core.debug_agent import agent_log
+
+            agent_log(
+                "H11",
+                "audio.tick",
+                "web drop pending BGM",
+                {"pending": _pending_music[0] if _pending_music else None},
+            )
+        except Exception:
+            pass
+        # #endregion
+        _pending_music = None
+        _music_fade_remaining = 0.0
+        return
     _music_fade_remaining -= max(0.0, dt)
     busy = False
     try:
@@ -354,7 +399,31 @@ def tick(dt: float) -> None:
     name, loop = _pending_music
     _pending_music = None
     _music_fade_remaining = 0.0
+    # #region agent log
+    try:
+        from core.debug_agent import agent_log
+        import time as _t
+
+        _t0 = _t.perf_counter()
+        agent_log("H11", "audio.tick", "deferred _start_music begin", {"name": name})
+    except Exception:
+        _t0 = 0.0
+    # #endregion
     _start_music(name, loop)
+    # #region agent log
+    try:
+        from core.debug_agent import agent_log
+        import time as _t
+
+        agent_log(
+            "H11",
+            "audio.tick",
+            "deferred _start_music end",
+            {"name": name, "ms": round((_t.perf_counter() - _t0) * 1000, 1)},
+        )
+    except Exception:
+        pass
+    # #endregion
 
 
 def stop_music(fade_ms: int = 400) -> None:

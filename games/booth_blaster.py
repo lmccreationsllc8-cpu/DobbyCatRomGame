@@ -453,7 +453,29 @@ class BoothBlaster:
             self._sprites["barrier_d2"] = _load_sprite("barrier_crate_d2.png", (120, 72), (40, 40, 48))
             self._asset_phase = 3
             return True
-        # phase 3: background
+        if self._asset_phase == 3:
+            # Pre-decode fight SFX so wave-clear / boss spawn do not hitch on WASM.
+            try:
+                from core.platform import is_web
+
+                if is_web():
+                    audio.preload_sfx(
+                        "wave_clear",
+                        "boss_incoming",
+                        "boss_defeat",
+                        "march",
+                        "shoot",
+                        "enemy_shoot",
+                        "hit",
+                        "enemy_die",
+                        "barrier_hit",
+                        "player_hurt",
+                    )
+            except Exception:
+                pass
+            self._asset_phase = 4
+            return True
+        # phase 4: background
         bg_path = SPRITES_DIR / "bg_booth.png"
         if bg_path.is_file():
             try:
@@ -639,8 +661,32 @@ class BoothBlaster:
         self.step_timer = 0.0
         self.dir = 1.0
         self.drop_pending = False
+        # #region agent log
+        try:
+            from core.debug_agent import agent_log
+            import time as _t
+
+            _t0 = _t.perf_counter()
+            agent_log("H11", "BoothBlaster._spawn_boss", "audio begin", {"wave": wave})
+        except Exception:
+            _t0 = 0.0
+        # #endregion
         audio.play_music("boss")
         audio.play("boss_incoming")
+        # #region agent log
+        try:
+            from core.debug_agent import agent_log
+            import time as _t
+
+            agent_log(
+                "H11",
+                "BoothBlaster._spawn_boss",
+                "audio end",
+                {"wave": wave, "ms": round((_t.perf_counter() - _t0) * 1000, 1)},
+            )
+        except Exception:
+            pass
+        # #endregion
 
     def _start_victory(self) -> None:
         self.wave.boss_active = False
