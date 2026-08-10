@@ -884,7 +884,7 @@ class BoothBlaster:
         self.player.invuln = max(0.0, self.player.invuln - dt)
         self.player.slow_timer = max(0.0, self.player.slow_timer - dt)
         speed = self.PLAYER_SPEED * (NET_SPEED_MUL if self.player.slow_timer > 0 else 1.0)
-        margin = self.player.w / 2 + 20
+        margin = self.player.w / 2 + _sx(20)
         if inp.aim_x is not None:
             self.player.x = max(margin, min(WIDTH - margin, float(inp.aim_x)))
         else:
@@ -920,10 +920,10 @@ class BoothBlaster:
             if rate is not None and random.random() < rate * dt:
                 if e.is_parent:
                     bolt_kind = random.choice(("treat", "net"))
-                    bw, bh = (40, 40) if bolt_kind == "treat" else (44, 44)
+                    bw, bh = (_sx(40), _sx(40)) if bolt_kind == "treat" else (_sx(44), _sx(44))
                 else:
                     bolt_kind = "paw"
-                    bw, bh = 34, 34
+                    bw, bh = _sx(34), _sx(34)
                 self.bolts.append(
                     Bolt(
                         e.x,
@@ -938,13 +938,14 @@ class BoothBlaster:
                 audio.play("enemy_shoot", volume=0.45)
 
         # Pillow flyers drift across; despawn off-screen (no score)
+        edge = _sx(20)
         for e in self.enemies:
             if e.is_flyer:
                 e.x += PILLOW_SPEED * dt
         self.enemies = [
             e
             for e in self.enemies
-            if not (e.is_flyer and (e.rect.right < -20 or e.rect.left > WIDTH + 20))
+            if not (e.is_flyer and (e.rect.right < -edge or e.rect.left > WIDTH + edge))
         ]
 
         # Bolts
@@ -989,9 +990,9 @@ class BoothBlaster:
         for e in self.enemies:
             if e.is_flyer:
                 continue
-            if e.rect.bottom >= self.player.rect.top - 10:
+            if e.rect.bottom >= self.player.rect.top - _sx(10):
                 self._player_hit()
-                e.y -= 40  # nudge so we don't multi-hit every frame
+                e.y -= _sx(40)  # nudge so we don't multi-hit every frame
 
         return self
 
@@ -1005,8 +1006,10 @@ class BoothBlaster:
             marchers = [e for e in self.enemies if not e.is_flyer]
         if not marchers:
             return
-        step_x = 28 if not self.wave.boss_active else 40
-        drop = 36
+        # Design-space steps must follow canvas SCALE (half-res web).
+        step_x = _sx(40 if self.wave.boss_active else 28)
+        drop = _sx(36)
+        edge = _sx(40)
         min_x = min(e.rect.left for e in marchers)
         max_x = max(e.rect.right for e in marchers)
         if self.drop_pending:
@@ -1018,13 +1021,16 @@ class BoothBlaster:
             return
         for e in marchers:
             e.x += step_x * self.dir
-        if (self.dir > 0 and max_x + step_x >= WIDTH - 40) or (self.dir < 0 and min_x - step_x <= 40):
+        if (self.dir > 0 and max_x + step_x >= WIDTH - edge) or (
+            self.dir < 0 and min_x - step_x <= edge
+        ):
             self.drop_pending = True
 
     def _march_solo(self, e: Enemy) -> None:
         """Independent edge-bounce march used by cat parents."""
-        step_x = 40
-        drop = 36
+        step_x = _sx(40)
+        drop = _sx(36)
+        edge = _sx(40)
         if e.drop_pending:
             e.y += drop
             e.march_dir *= -1
@@ -1033,8 +1039,8 @@ class BoothBlaster:
             return
         e.x += step_x * e.march_dir
         half_w = e.stats["w"] / 2
-        if (e.march_dir > 0 and e.x + half_w + step_x >= WIDTH - 40) or (
-            e.march_dir < 0 and e.x - half_w - step_x <= 40
+        if (e.march_dir > 0 and e.x + half_w + step_x >= WIDTH - edge) or (
+            e.march_dir < 0 and e.x - half_w - step_x <= edge
         ):
             e.drop_pending = True
 
@@ -1169,7 +1175,9 @@ class BoothBlaster:
     def _restart(self) -> None:
         self.score = 0
         self.wave = WaveState()
-        self.player = Player(x=WIDTH / 2, y=HEIGHT - 280)
+        # Keep restart spawn aligned with __init__ (must use _sx on web).
+        spawn_y = HEIGHT - _sx(280)
+        self.player = Player(x=WIDTH / 2, y=spawn_y)
         self.bolts.clear()
         self.game_over = False
         self.campaign_won = False
@@ -1183,6 +1191,24 @@ class BoothBlaster:
         self._block_fire = False
         self._spawn_barriers()
         self._spawn_wave(1)
+        # #region agent log
+        try:
+            from core.debug_agent import agent_log
+
+            agent_log(
+                "H17",
+                "BoothBlaster._restart",
+                "spawn reset",
+                {
+                    "player_y": round(float(self.player.y), 1),
+                    "barrier_y": round(float(self.barriers[0].y), 1) if self.barriers else None,
+                    "scale": SCALE,
+                    "height": HEIGHT,
+                },
+            )
+        except Exception:
+            pass
+        # #endregion
         audio.play("ui_confirm")
         audio.play_music("game")
 
