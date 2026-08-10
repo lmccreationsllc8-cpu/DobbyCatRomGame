@@ -32,6 +32,11 @@ def _sx(value: float) -> int:
     return max(1, int(round(value * SCALE)))
 
 
+# Design-space distance from canvas bottom to player center.
+# 280 sat a bit high on half-res web; 200 sits closer to classic invaders footing.
+PLAYER_SPAWN_BOTTOM = 200
+
+
 class EnemyKind(Enum):
     BOX = auto()
     ZIPTIE = auto()
@@ -373,7 +378,7 @@ class BoothBlaster:
         self.from_title = from_title
         self.score = 0
         self.wave = WaveState()
-        self.player = Player(x=WIDTH / 2, y=HEIGHT - _sx(280))
+        self.player = Player(x=WIDTH / 2, y=HEIGHT - _sx(PLAYER_SPAWN_BOTTOM))
         self.bolts: list[Bolt] = []
         self.enemies: list[Enemy] = []
         self.barriers: list[Barrier] = []
@@ -423,7 +428,8 @@ class BoothBlaster:
                     "barrier_top": int(self.barriers[0].rect.top) if self.barriers else None,
                     "scale": SCALE,
                     "height": HEIGHT,
-                    "expected_player_y": HEIGHT - _sx(280),
+                    "expected_player_y": HEIGHT - _sx(PLAYER_SPAWN_BOTTOM),
+                    "spawn_bottom": PLAYER_SPAWN_BOTTOM,
                 },
             )
         except Exception:
@@ -1245,7 +1251,7 @@ class BoothBlaster:
         self.score = 0
         self.wave = WaveState()
         # Keep restart spawn aligned with __init__ (must use _sx on web).
-        spawn_y = HEIGHT - _sx(280)
+        spawn_y = HEIGHT - _sx(PLAYER_SPAWN_BOTTOM)
         self.player = Player(x=WIDTH / 2, y=spawn_y)
         self.bolts.clear()
         self.game_over = False
@@ -1276,7 +1282,8 @@ class BoothBlaster:
                     "barrier_top": int(self.barriers[0].rect.top) if self.barriers else None,
                     "scale": SCALE,
                     "height": HEIGHT,
-                    "expected_player_y": HEIGHT - _sx(280),
+                    "expected_player_y": HEIGHT - _sx(PLAYER_SPAWN_BOTTOM),
+                    "spawn_bottom": PLAYER_SPAWN_BOTTOM,
                     "step_interval": round(float(self.step_interval), 3),
                 },
             )
