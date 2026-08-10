@@ -1344,10 +1344,7 @@ class BoothBlaster:
             surface.blit(spr, spr.get_rect(center=(int(b.x), int(b.y))))
 
         # HUD (cache font renders — WASM font.render every frame is costly)
-        if SCALE < 1.0:
-            hud = f"SCORE {self.score:05d}  L{self.player.lives}  W{self.wave.index}/{CAMPAIGN_WAVES}"
-        else:
-            hud = f"SCORE {self.score:05d}   LIVES {self.player.lives}   WAVE {self.wave.index}/{CAMPAIGN_WAVES}"
+        hud = f"SCORE {self.score:05d}   LIVES {self.player.lives}   WAVE {self.wave.index}/{CAMPAIGN_WAVES}"
         if getattr(self, "_hud_key", None) != hud:
             self._hud_key = hud
             self._hud_surf = self._font.render(hud, True, HUD_COLOR)
