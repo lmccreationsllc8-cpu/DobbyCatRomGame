@@ -10,7 +10,7 @@ from typing import Optional
 
 import pygame
 
-from config import HEIGHT, IDLE_QUIT_SECONDS, SCALE, SPRITES_DIR, WIDTH
+from config import BUILD_ID, HEIGHT, IDLE_QUIT_SECONDS, SCALE, SPRITES_DIR, WIDTH
 from core import audio, leaderboard, storage
 from core.audio_ui import AudioPanel, MuteChip
 from core.initials_ui import ALPHABET, InitialsPicker
@@ -406,6 +406,29 @@ class BoothBlaster:
         self._block_fire = False
         self._spawn_barriers()
         self._spawn_wave(self.wave.index)
+        # #region agent log
+        try:
+            from core.debug_agent import agent_log
+
+            _by = round(float(self.barriers[0].y), 1) if self.barriers else None
+            agent_log(
+                "H20",
+                "BoothBlaster.__init__",
+                "spawn init",
+                {
+                    "build": BUILD_ID,
+                    "player_y": round(float(self.player.y), 1),
+                    "player_bottom": int(self.player.rect.bottom),
+                    "barrier_y": _by,
+                    "barrier_top": int(self.barriers[0].rect.top) if self.barriers else None,
+                    "scale": SCALE,
+                    "height": HEIGHT,
+                    "expected_player_y": HEIGHT - _sx(280),
+                },
+            )
+        except Exception:
+            pass
+        # #endregion
         # Web/Safari: never start music inside the constructor — mixer.load can
         # stall the splash→game handoff. Main loop starts it after first yield.
         self._game_music_started = False
@@ -906,6 +929,31 @@ class BoothBlaster:
             self.step_timer += dt
             if self.step_timer >= self.step_interval:
                 self.step_timer = 0.0
+                # #region agent log
+                try:
+                    from core.debug_agent import agent_log
+
+                    _pre_drop = self.drop_pending
+                    _miny = min(e.y for e in formation) if formation else None
+                    agent_log(
+                        "H18",
+                        "BoothBlaster.update",
+                        "march tick",
+                        {
+                            "dt": round(float(dt), 4),
+                            "interval": round(float(self.step_interval), 3),
+                            "drop_pending": bool(_pre_drop),
+                            "drop_px": _sx(36),
+                            "step_x": _sx(28),
+                            "min_y": round(float(_miny), 1) if _miny is not None else None,
+                            "scale": SCALE,
+                            "build": BUILD_ID,
+                        },
+                        min_interval_ms=400,
+                    )
+                except Exception:
+                    pass
+                # #endregion
                 self._march_enemies(formation)
                 audio.play("march", volume=0.35 if self.wave.boss_active else 0.22)
         for e in parents:
@@ -1018,6 +1066,27 @@ class BoothBlaster:
             self.dir *= -1
             self.drop_pending = False
             self.step_interval = max(0.18, self.step_interval * 0.97)
+            # #region agent log
+            try:
+                from core.debug_agent import agent_log
+
+                agent_log(
+                    "H18",
+                    "BoothBlaster._march_enemies",
+                    "drop applied",
+                    {
+                        "drop_px": drop,
+                        "step_x": step_x,
+                        "min_y": round(min(e.y for e in marchers), 1),
+                        "interval": round(float(self.step_interval), 3),
+                        "width": WIDTH,
+                        "edge": edge,
+                        "scale": SCALE,
+                    },
+                )
+            except Exception:
+                pass
+            # #endregion
             return
         for e in marchers:
             e.x += step_x * self.dir
@@ -1200,10 +1269,15 @@ class BoothBlaster:
                 "BoothBlaster._restart",
                 "spawn reset",
                 {
+                    "build": BUILD_ID,
                     "player_y": round(float(self.player.y), 1),
+                    "player_bottom": int(self.player.rect.bottom),
                     "barrier_y": round(float(self.barriers[0].y), 1) if self.barriers else None,
+                    "barrier_top": int(self.barriers[0].rect.top) if self.barriers else None,
                     "scale": SCALE,
                     "height": HEIGHT,
+                    "expected_player_y": HEIGHT - _sx(280),
+                    "step_interval": round(float(self.step_interval), 3),
                 },
             )
         except Exception:
