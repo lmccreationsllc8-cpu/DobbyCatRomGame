@@ -85,11 +85,17 @@ jobs:
               text = path.read_text(encoding="utf-8")
               text = text.replace("web_src.tar.gz", f"web_src.tar.gz?v={sha}")
               text = text.replace("web_src.apk", f"web_src.apk?v={sha}")
+              # Portrait booth stage (540x960 web canvas). Default template is 16:9.
+              text = text.replace("fb_ar   :  1.77", "fb_ar   :  0.5625")
+              text = text.replace('fb_width : "1280"', 'fb_width : "540"')
+              text = text.replace('fb_height : "720"', 'fb_height : "960"')
               path.write_text(text, encoding="utf-8")
               print("cache-busted", path, "sha", sha)
+              if "fb_ar   :  0.5625" in text:
+                  print("portrait fb_ar ok")
           PY
           ls -la web_src/build/web
-          grep -n "web_src.tar.gz" web_src/build/web/index.html | head -3
+          grep -n "web_src.tar.gz\|fb_ar\|fb_width\|fb_height" web_src/build/web/index.html | head -8
 
       - name: Deploy to gh-pages
         uses: peaceiris/actions-gh-pages@v4
