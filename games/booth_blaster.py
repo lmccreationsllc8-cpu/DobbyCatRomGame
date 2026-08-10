@@ -1215,18 +1215,26 @@ class BoothBlaster:
                 spr = self._sprites["enemy_bolt"]
             surface.blit(spr, spr.get_rect(center=(int(b.x), int(b.y))))
 
-        # HUD
+        # HUD (cache font renders — WASM font.render every frame is costly)
         hud = f"SCORE {self.score:05d}   LIVES {self.player.lives}   WAVE {self.wave.index}/{CAMPAIGN_WAVES}"
-        surface.blit(self._font.render(hud, True, HUD_COLOR), (40, 40))
+        if getattr(self, "_hud_key", None) != hud:
+            self._hud_key = hud
+            self._hud_surf = self._font.render(hud, True, HUD_COLOR)
+        surface.blit(self._hud_surf, (40, 40))
         self._mute_chip.draw(surface)
         if self.wave.boss_active:
             label = BOSS_HUD_LABELS.get(self.wave.index, "BOSS!")
-            surface.blit(self._font.render(label, True, ACCENT), (180, 110))
+            if getattr(self, "_boss_hud_key", None) != label:
+                self._boss_hud_key = label
+                self._boss_hud_surf = self._font.render(label, True, ACCENT)
+            surface.blit(self._boss_hud_surf, (180, 110))
 
         if self.won_wave_flash > 0:
             msg = "BOSS INCOMING!" if self.wave.boss_pending else "WAVE CLEAR!"
-            text = self._font_lg.render(msg, True, OK)
-            surface.blit(text, text.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 80)))
+            if getattr(self, "_flash_msg_key", None) != msg:
+                self._flash_msg_key = msg
+                self._flash_msg_surf = self._font_lg.render(msg, True, OK)
+            surface.blit(self._flash_msg_surf, self._flash_msg_surf.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 80)))
 
         if self.victory_timer > 0:
             self._draw_victory(surface)
@@ -1738,6 +1746,26 @@ class TitleScene:
             self._enter_grace = max(0.0, self._enter_grace - dt)
             self._block_confirm = True
             return self
+        # Debug URL ?spawn=boss — auto-start a run after title is ready.
+        if not getattr(self, "_url_autostart_done", False):
+            self._url_autostart_done = True
+            try:
+                from core.platform import is_web
+                import platform as _plat
+
+                if is_web() and "spawn=boss" in str(getattr(_plat.window.location, "search", "") or ""):
+                    # #region agent log
+                    try:
+                        from core.debug_agent import agent_log
+
+                        agent_log("H12", "TitleScene.update", "url autostart spawn=boss", {})
+                    except Exception:
+                        pass
+                    # #endregion
+                    audio.play("ui_confirm")
+                    return BoothBlaster(from_title=True)
+            except Exception:
+                pass
         # Unlock music on any post-splash gesture (required on Safari/WebAudio).
         if inp.any_activity or inp.confirm_pressed or inp.fire_pressed:
             self._allow_music = True
@@ -1875,9 +1903,10 @@ class TitleScene:
         return self
 
     def _rebuild_title_static(self) -> None:
-        """Cache expensive font/leaderboard blits (H7: first full title draw hitch)."""
+        """Cache gradient + fonts into one opaque surface (H7: 25-75ms/frame before)."""
         assert self._font and self._font_lg and self._font_sm
-        layer = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        layer = pygame.Surface((WIDTH, HEIGHT))
+        BoothBlaster._draw_gradient_bg(layer)
         title = self._font_lg.render("BOOTH BLASTER", True, ACCENT)
         sub = self._font.render("Laser Monkey vs the Con Crowd", True, HUD_COLOR)
         tip_text, tip2_text, tip3_text = control_prompt_lines("Start")
@@ -1926,27 +1955,27 @@ class TitleScene:
             _t0 = 0.0
             _rebuild = self._title_static is None or self._title_static_skin != self._skin_index
         # #endregion
-        BoothBlaster._draw_gradient_bg(surface)
         if _rebuild:
             self._rebuild_title_static()
         if self._title_static is not None:
             surface.blit(self._title_static, (0, 0))
+        else:
+            BoothBlaster._draw_gradient_bg(surface)
         self._audio_panel.draw(surface)
         # #region agent log
         try:
             from core.debug_agent import agent_log
             import time as _t
 
-            agent_log(
-                "H7",
-                "TitleScene._draw_title_base",
-                "draw done",
-                {
-                    "ms": round((_t.perf_counter() - _t0) * 1000, 1),
-                    "rebuilt": bool(_rebuild),
-                },
-                min_interval_ms=500,
-            )
+            _ms = round((_t.perf_counter() - _t0) * 1000, 1)
+            if _rebuild or _ms >= 12.0:
+                agent_log(
+                    "H7",
+                    "TitleScene._draw_title_base",
+                    "draw done",
+                    {"ms": _ms, "rebuilt": bool(_rebuild)},
+                    min_interval_ms=1000,
+                )
         except Exception:
             pass
         # #endregion

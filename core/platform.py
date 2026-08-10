@@ -91,6 +91,8 @@ def apply_mobile_runtime_tweaks() -> None:
         # Arcade idle quit is wrong in a browser tab.
         config.IDLE_QUIT_SECONDS = 86_400.0
         config.FULLSCREEN = False
+        # 1080x1920 WASM draws are heavy; 30 FPS keeps the tab responsive.
+        config.FPS = 30
         config.LEADERBOARD_PATH = leaderboard_path()
         try:
             import platform as _plat

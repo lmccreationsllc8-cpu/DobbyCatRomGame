@@ -9,6 +9,7 @@ from typing import Any, Optional
 
 _SESSION = "c09524"
 _LOG = Path(__file__).resolve().parents[1] / "debug-c09524.log"
+_INGEST = "http://127.0.0.1:7319/ingest/a26fd018-190b-4e9e-8c78-2c75b0f5e30e"
 _COUNT = 0
 # Rate-limit noisy per-frame logs (hypothesis H5/H9).
 _LAST_KEY_MS: dict[str, int] = {}
@@ -53,7 +54,7 @@ def agent_log(
         print(text, flush=True)
     except Exception:
         pass
-    # Web: console only. Never fetch 127.0.0.1 — unreachable hosts can stall WASM/Safari.
+    # Web: console + fire-and-forget ingest (local PC browser debug sessions).
     try:
         from core.platform import is_web
 
@@ -61,15 +62,29 @@ def agent_log(
             import platform as _plat
 
             _plat.window.console.log(text)
+            # Do not await the promise — awaiting unreachable hosts freezes WASM.
+            _plat.window.fetch(
+                _INGEST,
+                {
+                    "method": "POST",
+                    "headers": {
+                        "Content-Type": "application/json",
+                        "X-Debug-Session-Id": _SESSION,
+                    },
+                    "body": line,
+                    "mode": "no-cors",
+                    "keepalive": True,
+                },
+            )
             return
     except Exception:
         pass
-    # Desktop: optional local ingest (short timeout, never block the game loop long).
+    # Desktop native: short-timeout ingest.
     try:
         import urllib.request
 
         req = urllib.request.Request(
-            "http://127.0.0.1:7319/ingest/a26fd018-190b-4e9e-8c78-2c75b0f5e30e",
+            _INGEST,
             data=line.encode("utf-8"),
             headers={
                 "Content-Type": "application/json",

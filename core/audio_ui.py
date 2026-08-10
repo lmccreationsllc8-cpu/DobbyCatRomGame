@@ -31,6 +31,8 @@ class AudioPanel:
         self._font = load_font(max(18, int(28 * scale)))
         self._font_sm = load_font(max(16, int(22 * scale)))
         self.buttons: list[_Btn] = []
+        self._cache: Optional[pygame.Surface] = None
+        self._cache_key: Optional[tuple] = None
         self._layout(top_right, scale)
 
     def _layout(self, top_right: tuple[int, int], scale: float) -> None:
@@ -122,23 +124,35 @@ class AudioPanel:
         return False
 
     def draw(self, surface: pygame.Surface) -> None:
-        overlay = pygame.Surface(self.panel_rect.size, pygame.SRCALPHA)
-        overlay.fill(PANEL)
-        surface.blit(overlay, self.panel_rect.topleft)
-
         settings = audio.get_settings()
-        mute_label = "UNMUTE" if settings.muted else "MUTE"
-        mute_color = MUTED if settings.muted else OK
-        self._draw_btn(surface, self.mute_rect, mute_label, mute_color)
+        key = (
+            bool(settings.muted),
+            round(float(settings.music_volume), 2),
+            round(float(settings.sfx_volume), 2),
+        )
+        if self._cache is None or self._cache_key != key:
+            layer = pygame.Surface(self.panel_rect.size, pygame.SRCALPHA)
+            layer.fill(PANEL)
+            origin = self.panel_rect.topleft
 
-        for btn in self.buttons:
-            if btn.kind == "mute":
-                continue
-            label = "-" if btn.kind.endswith("down") else "+"
-            self._draw_btn(surface, btn.rect, label, HUD)
+            def local(rect: pygame.Rect) -> pygame.Rect:
+                return rect.move(-origin[0], -origin[1])
 
-        self._draw_bar(surface, self.music_bar, "MUSIC", settings.music_volume, settings.muted)
-        self._draw_bar(surface, self.sfx_bar, "SFX", settings.sfx_volume, settings.muted)
+            mute_label = "UNMUTE" if settings.muted else "MUTE"
+            mute_color = MUTED if settings.muted else OK
+            self._draw_btn(layer, local(self.mute_rect), mute_label, mute_color)
+            for btn in self.buttons:
+                if btn.kind == "mute":
+                    continue
+                label = "-" if btn.kind.endswith("down") else "+"
+                self._draw_btn(layer, local(btn.rect), label, HUD)
+            self._draw_bar(
+                layer, local(self.music_bar), "MUSIC", settings.music_volume, settings.muted
+            )
+            self._draw_bar(layer, local(self.sfx_bar), "SFX", settings.sfx_volume, settings.muted)
+            self._cache = layer
+            self._cache_key = key
+        surface.blit(self._cache, self.panel_rect.topleft)
 
     def _draw_btn(
         self, surface: pygame.Surface, rect: pygame.Rect, label: str, color: tuple[int, int, int]
@@ -174,6 +188,8 @@ class MuteChip:
         w, h = 110, 48
         self.rect = pygame.Rect(topleft[0], topleft[1], w, h)
         self._last_click_ts = 0.0
+        self._cache: Optional[pygame.Surface] = None
+        self._cache_muted: Optional[bool] = None
 
     def handle_click(self, pos: tuple[int, int]) -> bool:
         if not self.rect.collidepoint(pos):
@@ -189,11 +205,14 @@ class MuteChip:
 
     def draw(self, surface: pygame.Surface) -> None:
         muted = audio.is_muted()
-        color = MUTED if muted else OK
-        chip = pygame.Surface(self.rect.size, pygame.SRCALPHA)
-        chip.fill((20, 24, 40, 180))
-        surface.blit(chip, self.rect.topleft)
-        pygame.draw.rect(surface, color, self.rect, width=2, border_radius=10)
-        label = "MUTED" if muted else "MUTE"
-        text = self._font.render(label, True, color)
-        surface.blit(text, text.get_rect(center=self.rect.center))
+        if self._cache is None or self._cache_muted != muted:
+            color = MUTED if muted else OK
+            chip = pygame.Surface(self.rect.size, pygame.SRCALPHA)
+            chip.fill((20, 24, 40, 180))
+            pygame.draw.rect(chip, color, chip.get_rect(), width=2, border_radius=10)
+            label = "MUTED" if muted else "MUTE"
+            text = self._font.render(label, True, color)
+            chip.blit(text, text.get_rect(center=chip.get_rect().center))
+            self._cache = chip
+            self._cache_muted = muted
+        surface.blit(self._cache, self.rect.topleft)
