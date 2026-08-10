@@ -7,8 +7,13 @@ from typing import Callable, Optional
 
 import pygame
 
+from config import SCALE
 from core import audio
 from core.platform import load_font
+
+
+def _sx(value: float) -> int:
+    return max(1, int(round(value * SCALE)))
 
 ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 ACCENT = (255, 105, 180)
@@ -28,7 +33,7 @@ class InitialsPicker:
         self._font_lg = load_font(72, bold=True)
         self._font_sm = load_font(28)
         self.center = center
-        self.width = width
+        self.width = _sx(width)
         self.slot_rects: list[pygame.Rect] = []
         self.cell_rects: list[tuple[str, pygame.Rect]] = []
         self.done_rect = pygame.Rect(0, 0, 1, 1)
@@ -38,24 +43,24 @@ class InitialsPicker:
 
     def _layout(self) -> None:
         cx, cy = self.center
-        pad = 16
-        cell = 96
-        gap = 12
+        pad = _sx(16)
+        cell = _sx(96)
+        gap = _sx(12)
         grid_w = self.COLS * cell + (self.COLS - 1) * gap
         grid_h = self.ROWS * cell + (self.ROWS - 1) * gap
-        slot_w, slot_h = 120, 110
-        slot_gap = 28
+        slot_w, slot_h = _sx(120), _sx(110)
+        slot_gap = _sx(28)
         slots_w = 3 * slot_w + 2 * slot_gap
 
         # Slots above grid
-        slots_y = cy - grid_h // 2 - slot_h - 48
+        slots_y = cy - grid_h // 2 - slot_h - _sx(48)
         slots_x0 = cx - slots_w // 2
         self.slot_rects = [
             pygame.Rect(slots_x0 + i * (slot_w + slot_gap), slots_y, slot_w, slot_h) for i in range(3)
         ]
 
         grid_x0 = cx - grid_w // 2
-        grid_y0 = cy - grid_h // 2 + 20
+        grid_y0 = cy - grid_h // 2 + _sx(20)
         self.cell_rects = []
         for i, ch in enumerate(ALPHABET):
             r = i // self.COLS
@@ -68,9 +73,9 @@ class InitialsPicker:
             )
             self.cell_rects.append((ch, rect))
 
-        self.done_rect = pygame.Rect(0, 0, 280, 88)
+        self.done_rect = pygame.Rect(0, 0, _sx(280), _sx(88))
         self.done_rect.centerx = cx
-        self.done_rect.top = grid_y0 + grid_h + 28
+        self.done_rect.top = grid_y0 + grid_h + _sx(28)
 
         top = self.slot_rects[0].top - pad
         bottom = self.done_rect.bottom + pad

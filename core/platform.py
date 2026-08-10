@@ -129,7 +129,18 @@ def mixer_buffer() -> int:
 
 
 def load_font(size: int, bold: bool = False) -> pygame.font.Font:
-    """Load bundled TTF; fall back to SysFont only on desktop."""
+    """Load bundled TTF; fall back to SysFont only on desktop.
+
+    On web the canvas is half-res (config.SCALE=0.5); shrink pt size so UI
+    is not double-zoomed when CSS scales the canvas back up.
+    """
+    try:
+        from config import SCALE
+
+        if SCALE != 1.0:
+            size = max(8, int(round(float(size) * SCALE)))
+    except Exception:
+        pass
     for path in FONT_CANDIDATES:
         if path.is_file():
             try:

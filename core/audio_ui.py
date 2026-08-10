@@ -8,6 +8,7 @@ from typing import Optional
 
 import pygame
 
+from config import SCALE
 from core import audio
 from core.platform import load_font
 
@@ -37,12 +38,14 @@ class AudioPanel:
 
     def _layout(self, top_right: tuple[int, int], scale: float) -> None:
         right, top = top_right
-        pad = int(12 * scale)
-        btn_h = int(52 * scale)
-        mute_w = int(120 * scale)
-        step_w = int(56 * scale)
-        bar_w = int(140 * scale)
-        gap = int(10 * scale)
+        # Match half-res web canvas so panel geometry tracks font scaling.
+        s = scale * SCALE
+        pad = int(12 * s)
+        btn_h = int(52 * s)
+        mute_w = int(120 * s)
+        step_w = int(56 * s)
+        bar_w = int(140 * s)
+        gap = int(10 * s)
 
         # Row width from right edge
         x = right
@@ -185,7 +188,7 @@ class MuteChip:
 
     def __init__(self, topleft: tuple[int, int]) -> None:
         self._font = load_font(28)
-        w, h = 110, 48
+        w, h = max(1, int(110 * SCALE)), max(1, int(48 * SCALE))
         self.rect = pygame.Rect(topleft[0], topleft[1], w, h)
         self._last_click_ts = 0.0
         self._cache: Optional[pygame.Surface] = None

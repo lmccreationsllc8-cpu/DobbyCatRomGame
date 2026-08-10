@@ -401,7 +401,7 @@ class BoothBlaster:
         self._initials = ["A", "A", "A"]
         self._initial_idx = 0
         self._letter_cooldown = 0.0
-        self._mute_chip = MuteChip((40, 100))
+        self._mute_chip = MuteChip((_sx(40), _sx(100)))
         self._initials_picker: Optional[InitialsPicker] = None
         self._block_fire = False
         self._spawn_barriers()
@@ -1111,7 +1111,7 @@ class BoothBlaster:
         self._letter_cooldown = 0.0
         self._entering_score = leaderboard.qualifies(self.score)
         self._initials_picker = (
-            InitialsPicker(center=(WIDTH // 2, HEIGHT // 2 + 280), width=920)
+            InitialsPicker(center=(WIDTH // 2, HEIGHT // 2 + _sx(280)), width=920)
             if self._entering_score
             else None
         )
@@ -1237,25 +1237,31 @@ class BoothBlaster:
             surface.blit(spr, spr.get_rect(center=(int(b.x), int(b.y))))
 
         # HUD (cache font renders — WASM font.render every frame is costly)
-        hud = f"SCORE {self.score:05d}   LIVES {self.player.lives}   WAVE {self.wave.index}/{CAMPAIGN_WAVES}"
+        if SCALE < 1.0:
+            hud = f"SCORE {self.score:05d}  L{self.player.lives}  W{self.wave.index}/{CAMPAIGN_WAVES}"
+        else:
+            hud = f"SCORE {self.score:05d}   LIVES {self.player.lives}   WAVE {self.wave.index}/{CAMPAIGN_WAVES}"
         if getattr(self, "_hud_key", None) != hud:
             self._hud_key = hud
             self._hud_surf = self._font.render(hud, True, HUD_COLOR)
-        surface.blit(self._hud_surf, (40, 40))
+        surface.blit(self._hud_surf, (_sx(40), _sx(40)))
         self._mute_chip.draw(surface)
         if self.wave.boss_active:
             label = BOSS_HUD_LABELS.get(self.wave.index, "BOSS!")
             if getattr(self, "_boss_hud_key", None) != label:
                 self._boss_hud_key = label
                 self._boss_hud_surf = self._font.render(label, True, ACCENT)
-            surface.blit(self._boss_hud_surf, (180, 110))
+            surface.blit(self._boss_hud_surf, (_sx(180), _sx(110)))
 
         if self.won_wave_flash > 0:
             msg = "BOSS INCOMING!" if self.wave.boss_pending else "WAVE CLEAR!"
             if getattr(self, "_flash_msg_key", None) != msg:
                 self._flash_msg_key = msg
                 self._flash_msg_surf = self._font_lg.render(msg, True, OK)
-            surface.blit(self._flash_msg_surf, self._flash_msg_surf.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 80)))
+            surface.blit(
+                self._flash_msg_surf,
+                self._flash_msg_surf.get_rect(center=(WIDTH // 2, HEIGHT // 2 - _sx(80))),
+            )
 
         if self.victory_timer > 0:
             self._draw_victory(surface)
@@ -1264,32 +1270,32 @@ class BoothBlaster:
             overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
             overlay.fill((0, 0, 0, 180))
             surface.blit(overlay, (0, 0))
-            go_y = HEIGHT // 2 - 520 if self._entering_score else HEIGHT // 2 - 280
+            go_y = HEIGHT // 2 - (_sx(520) if self._entering_score else _sx(280))
             headline = "BOOTH CLEARED!" if self.campaign_won else "GAME OVER"
             head_color = OK if self.campaign_won else DANGER
             go = self._font_lg.render(headline, True, head_color)
             score_line = self._font.render(f"SCORE {self.score:05d}   WAVE {self.wave.index}", True, HUD_COLOR)
             surface.blit(go, go.get_rect(center=(WIDTH // 2, go_y)))
-            surface.blit(score_line, score_line.get_rect(center=(WIDTH // 2, go_y + 80)))
+            surface.blit(score_line, score_line.get_rect(center=(WIDTH // 2, go_y + _sx(80))))
 
             if self._entering_score:
-                prompt = self._font.render("NEW HIGH SCORE — enter initials", True, ACCENT)
-                surface.blit(prompt, prompt.get_rect(center=(WIDTH // 2, go_y + 150)))
+                prompt = self._font.render("NEW HIGH SCORE - enter initials", True, ACCENT)
+                surface.blit(prompt, prompt.get_rect(center=(WIDTH // 2, go_y + _sx(150))))
                 if self._initials_picker is not None:
                     self._initials_picker.draw(surface, self._initials, self._initial_idx)
                 else:
                     letters = "  ".join(self._initials)
                     init_surf = self._font_lg.render(letters, True, OK)
-                    surface.blit(init_surf, init_surf.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 40)))
+                    surface.blit(init_surf, init_surf.get_rect(center=(WIDTH // 2, HEIGHT // 2 - _sx(40))))
             else:
                 if self._score_saved:
                     saved = self._font.render("Score saved!", True, OK)
-                    surface.blit(saved, saved.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 120)))
+                    surface.blit(saved, saved.get_rect(center=(WIDTH // 2, HEIGHT // 2 - _sx(120))))
                 tip_label = "Title" if self.campaign_won else "Restart"
                 tip_text, _, _ = control_prompt_lines(tip_label)
                 tip = self._font.render(tip_text, True, HUD_COLOR)
-                surface.blit(tip, tip.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 60)))
-                self._draw_leaderboard(surface, HEIGHT // 2 + 20)
+                surface.blit(tip, tip.get_rect(center=(WIDTH // 2, HEIGHT // 2 - _sx(60))))
+                self._draw_leaderboard(surface, HEIGHT // 2 + _sx(20))
 
     def _draw_leaderboard(self, surface: pygame.Surface, top_y: int) -> None:
         assert self._font and self._font_lg
@@ -1298,15 +1304,15 @@ class BoothBlaster:
         entries = leaderboard.load_scores()
         if not entries:
             empty = self._font.render("No scores yet - be the first!", True, HUD_COLOR)
-            surface.blit(empty, empty.get_rect(center=(WIDTH // 2, top_y + 60)))
+            surface.blit(empty, empty.get_rect(center=(WIDTH // 2, top_y + _sx(60))))
             return
-        y = top_y + 50
+        y = top_y + _sx(50)
         for i, entry in enumerate(entries[:10], start=1):
             rank_color = OK if i == 1 else HUD_COLOR
             line = f"{i:2d}.  {entry.name}   {entry.score:05d}   W{entry.wave}"
             text = self._font.render(line, True, rank_color)
             surface.blit(text, text.get_rect(center=(WIDTH // 2, y)))
-            y += 44
+            y += _sx(44)
 
     def _draw_victory(self, surface: pygame.Surface) -> None:
         assert self._font and self._font_lg
@@ -1338,15 +1344,15 @@ class BoothBlaster:
             pygame.draw.circle(surface, p["color"], (int(p["x"]), int(p["y"])), size)
 
         banner = self._font_lg.render("CONGRATULATIONS!", True, ACCENT)
-        surface.blit(banner, banner.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 280)))
-        sub = self._font.render("BOOTH CLEARED — you beat the Cat Parents!", True, HUD_COLOR)
-        surface.blit(sub, sub.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 200)))
+        surface.blit(banner, banner.get_rect(center=(WIDTH // 2, HEIGHT // 2 - _sx(280))))
+        sub = self._font.render("BOOTH CLEARED - you beat the Cat Parents!", True, HUD_COLOR)
+        surface.blit(sub, sub.get_rect(center=(WIDTH // 2, HEIGHT // 2 - _sx(200))))
 
         # Sparkle ring
         for i in range(12):
             ang = t * 2.5 + i * (math.pi * 2 / 12)
-            sx = WIDTH // 2 + int(math.cos(ang) * 220)
-            sy = HEIGHT // 2 - 40 + int(math.sin(ang) * 90)
+            sx = WIDTH // 2 + int(math.cos(ang) * _sx(220))
+            sy = HEIGHT // 2 - _sx(40) + int(math.sin(ang) * _sx(90))
             pygame.draw.circle(surface, (255, 255, 200), (sx, sy), 4 + (i % 3))
 
     _gradient_bg: Optional[pygame.Surface] = None
@@ -1529,7 +1535,7 @@ class TitleScene:
         self._title_static: Optional[pygame.Surface] = None
         self._title_static_skin = -1
         self.next_scene: Optional[BoothBlaster] = None
-        self._audio_panel = AudioPanel((WIDTH - 36, 36), scale=1.15)
+        self._audio_panel = AudioPanel((WIDTH - _sx(36), _sx(36)), scale=1.15)
         self._block_confirm = True
         # Phoenix title secret (one-shot per visit).
         self._phoenix: Optional[pygame.Surface] = None
@@ -1606,7 +1612,7 @@ class TitleScene:
             except Exception:
                 _t_spr = 0.0
             # #endregion
-            self._phoenix = _load_sprite("fx_phoenix.png", (280, 200), (255, 120, 40))
+            self._phoenix = _load_sprite("fx_phoenix.png", (_sx(280), _sx(200)), (255, 120, 40))
             self._reload_skin_preview()
             # #region agent log
             try:
@@ -1628,7 +1634,7 @@ class TitleScene:
 
     def _reload_skin_preview(self) -> None:
         name = player_skin_filename(self._skin_index)
-        self._skin_preview = _load_sprite(name, (180, 180), (180, 120, 70))
+        self._skin_preview = _load_sprite(name, (_sx(180), _sx(180)), (180, 120, 70))
         self._skin_label = name.replace("player_dobby_", "").replace(".png", "").replace("_", " ").upper()
 
     def _cycle_skin(self, delta: int) -> None:
@@ -1644,15 +1650,15 @@ class TitleScene:
 
     def _skin_hit_rects(self) -> tuple[pygame.Rect, pygame.Rect, pygame.Rect]:
         """Left arrow, preview, right arrow — title skin cycle touch targets."""
-        cy = HEIGHT // 2 + 520
-        preview = pygame.Rect(0, 0, 180, 180)
+        cy = HEIGHT // 2 + _sx(520)
+        preview = pygame.Rect(0, 0, _sx(180), _sx(180))
         preview.center = (WIDTH // 2, cy)
-        left = pygame.Rect(0, 0, 96, 96)
+        left = pygame.Rect(0, 0, _sx(96), _sx(96))
         left.centery = cy
-        left.right = preview.left - 24
-        right = pygame.Rect(0, 0, 96, 96)
+        left.right = preview.left - _sx(24)
+        right = pygame.Rect(0, 0, _sx(96), _sx(96))
         right.centery = cy
-        right.left = preview.right + 24
+        right.left = preview.right + _sx(24)
         return left, preview, right
 
     def _phoenix_total_dur(self) -> float:
@@ -1936,30 +1942,30 @@ class TitleScene:
         tip3 = self._font.render(tip3_text, True, HUD_COLOR)
         tip4 = self._font.render("M mute - [ ] music - , . sfx", True, HUD_COLOR)
         tip5 = self._font_sm.render("Left/Right - cycle Dobby skin", True, HUD_COLOR)
-        layer.blit(title, title.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 420)))
-        layer.blit(sub, sub.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 340)))
-        layer.blit(tip, tip.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 260)))
-        layer.blit(tip2, tip2.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 210)))
-        layer.blit(tip3, tip3.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 160)))
-        layer.blit(tip4, tip4.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 110)))
-        layer.blit(tip5, tip5.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 60)))
+        layer.blit(title, title.get_rect(center=(WIDTH // 2, HEIGHT // 2 - _sx(420))))
+        layer.blit(sub, sub.get_rect(center=(WIDTH // 2, HEIGHT // 2 - _sx(340))))
+        layer.blit(tip, tip.get_rect(center=(WIDTH // 2, HEIGHT // 2 - _sx(260))))
+        layer.blit(tip2, tip2.get_rect(center=(WIDTH // 2, HEIGHT // 2 - _sx(210))))
+        layer.blit(tip3, tip3.get_rect(center=(WIDTH // 2, HEIGHT // 2 - _sx(160))))
+        layer.blit(tip4, tip4.get_rect(center=(WIDTH // 2, HEIGHT // 2 - _sx(110))))
+        layer.blit(tip5, tip5.get_rect(center=(WIDTH // 2, HEIGHT // 2 - _sx(60))))
 
         dummy = BoothBlaster.__new__(BoothBlaster)
         dummy._font = self._font
         dummy._font_lg = self._font_lg
-        BoothBlaster._draw_leaderboard(dummy, layer, HEIGHT // 2 - 20)
+        BoothBlaster._draw_leaderboard(dummy, layer, HEIGHT // 2 - _sx(20))
 
         left, preview, right = self._skin_hit_rects()
         if self._skin_preview is not None:
             layer.blit(self._skin_preview, preview)
-        pygame.draw.rect(layer, ACCENT, left, border_radius=12)
-        pygame.draw.rect(layer, ACCENT, right, border_radius=12)
+        pygame.draw.rect(layer, ACCENT, left, border_radius=_sx(12))
+        pygame.draw.rect(layer, ACCENT, right, border_radius=_sx(12))
         left_lbl = self._font_lg.render("<", True, HUD_COLOR)
         right_lbl = self._font_lg.render(">", True, HUD_COLOR)
         layer.blit(left_lbl, left_lbl.get_rect(center=left.center))
         layer.blit(right_lbl, right_lbl.get_rect(center=right.center))
         skin_name = self._font_sm.render(self._skin_label, True, OK)
-        layer.blit(skin_name, skin_name.get_rect(center=(WIDTH // 2, preview.bottom + 28)))
+        layer.blit(skin_name, skin_name.get_rect(center=(WIDTH // 2, preview.bottom + _sx(28))))
         self._title_static = layer
         self._title_static_skin = self._skin_index
 
