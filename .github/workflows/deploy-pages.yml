@@ -32,12 +32,15 @@ jobs:
       - name: Stage slim web package
         run: |
           set -euo pipefail
+          SHA=$(git rev-parse --short HEAD)
           rm -rf web_src
           mkdir -p web_src/assets/audio web_src/assets/fonts web_src/assets/sprites
           mkdir -p web_src/core web_src/games
           cp main.py config.py web_src/
           cp core/*.py web_src/core/
           cp games/*.py web_src/games/
+          # Stamp build id into the packaged config (visible in agent logs).
+          sed -i "s/BUILD_ID = .*/BUILD_ID = \"${SHA}\"/" web_src/config.py
           # Web prefers OGG; skip large WAVs to keep the download small.
           cp assets/audio/*.ogg web_src/assets/audio/
           cp assets/fonts/*.ttf web_src/assets/fonts/
@@ -51,6 +54,7 @@ jobs:
           printf '[]\n' > web_src/data/leaderboard.json
           ls -la web_src
           du -sh web_src
+          echo "BUILD_ID ${SHA}"
 
       - name: Build with pygbag
         run: |
@@ -67,7 +71,25 @@ jobs:
             web_src
           # GitHub Pages should not run Jekyll on underscore paths.
           touch web_src/build/web/.nojekyll
+          # Bust browser cache of the pygbag archive (Pages host uses .tar.gz;
+          # ?v= on the site URL does NOT re-fetch web_src.tar.gz otherwise).
+          SHA=$(git rev-parse --short HEAD)
+          python - <<PY
+          from pathlib import Path
+          sha = "${SHA}"
+          root = Path("web_src/build/web")
+          for name in ("index.html", "index.htm"):
+              path = root / name
+              if not path.is_file():
+                  continue
+              text = path.read_text(encoding="utf-8")
+              text = text.replace("web_src.tar.gz", f"web_src.tar.gz?v={sha}")
+              text = text.replace("web_src.apk", f"web_src.apk?v={sha}")
+              path.write_text(text, encoding="utf-8")
+              print("cache-busted", path, "sha", sha)
+          PY
           ls -la web_src/build/web
+          grep -n "web_src.tar.gz" web_src/build/web/index.html | head -3
 
       - name: Deploy to gh-pages
         uses: peaceiris/actions-gh-pages@v4

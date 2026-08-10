@@ -10,7 +10,7 @@ from typing import Optional
 
 import pygame
 
-from config import HEIGHT, IDLE_QUIT_SECONDS, SPRITES_DIR, WIDTH
+from config import HEIGHT, IDLE_QUIT_SECONDS, SCALE, SPRITES_DIR, WIDTH
 from core import audio, leaderboard, storage
 from core.audio_ui import AudioPanel, MuteChip
 from core.initials_ui import ALPHABET, InitialsPicker
@@ -25,6 +25,11 @@ HUD_COLOR = (245, 235, 210)
 ACCENT = (255, 105, 180)
 DANGER = (255, 80, 80)
 OK = (120, 220, 160)
+
+
+def _sx(value: float) -> int:
+    """Scale a design-pixel length for the current canvas (0.5 on web)."""
+    return max(1, int(round(value * SCALE)))
 
 
 class EnemyKind(Enum):
@@ -128,6 +133,12 @@ ENEMY_STATS = {
     EnemyKind.BOSS_PARENT_B: {"hp": 18, "score": 350, "w": 200, "h": 240, "color": (30, 30, 36), "sprite": "enemy_boss_parent_b.png"},
 }
 
+# Half-res web canvas: shrink authored sprite/collision boxes to match.
+if SCALE != 1.0:
+    for _stats in ENEMY_STATS.values():
+        _stats["w"] = _sx(_stats["w"])
+        _stats["h"] = _sx(_stats["h"])
+
 BOSS_HUD_LABELS = {
     1: "SCOOTER DOG!",
     2: "SHADOW KITTEN!",
@@ -161,8 +172,8 @@ def player_skin_filename(index: Optional[int] = None) -> str:
         return "player_dobby.png"
     return PLAYER_SKINS[idx % len(PLAYER_SKINS)]
 
-PILLOW_FLY_Y = 180.0
-PILLOW_SPEED = 160.0
+PILLOW_FLY_Y = 180.0 * SCALE
+PILLOW_SPEED = 160.0 * SCALE
 VICTORY_DURATION = 4.0
 NET_SLOW_DURATION = 1.0
 NET_SPEED_MUL = 0.45
@@ -330,8 +341,8 @@ class Player:
     x: float
     y: float
     lives: int = 3
-    w: int = 220
-    h: int = 220
+    w: int = _sx(220)
+    h: int = _sx(220)
     cooldown: float = 0.0
     invuln: float = 0.0
     slow_timer: float = 0.0
@@ -353,16 +364,16 @@ class BoothBlaster:
     """Playable Booth Blaster scene (also usable as a standalone scene)."""
 
     # Pad/keyboard use velocity; 1200 crosses 1080px in ~0.9s (was 520 / ~2.1s).
-    PLAYER_SPEED = 1200.0
+    PLAYER_SPEED = 1200.0 * SCALE
     FIRE_COOLDOWN = 0.22
-    BOLT_SPEED = -900.0
-    ENEMY_BOLT_SPEED = 420.0
+    BOLT_SPEED = -900.0 * SCALE
+    ENEMY_BOLT_SPEED = 420.0 * SCALE
 
     def __init__(self, from_title: bool = True) -> None:
         self.from_title = from_title
         self.score = 0
         self.wave = WaveState()
-        self.player = Player(x=WIDTH / 2, y=HEIGHT - 280)
+        self.player = Player(x=WIDTH / 2, y=HEIGHT - _sx(280))
         self.bolts: list[Bolt] = []
         self.enemies: list[Enemy] = []
         self.barriers: list[Barrier] = []
@@ -422,11 +433,15 @@ class BoothBlaster:
         if self._asset_phase == 0:
             self._font = load_font(36)
             self._font_lg = load_font(64, bold=True)
-            self._sprites["player"] = _load_sprite(player_skin_filename(), (220, 220), (180, 120, 70))
-            self._sprites["bolt"] = _load_sprite("paw_bolt.png", (40, 40), (255, 180, 220))
-            self._sprites["enemy_bolt"] = _load_sprite("paw_enemy.png", (36, 36), (255, 90, 70))
-            self._sprites["treat"] = _load_sprite("proj_treat.png", (40, 40), (230, 160, 70))
-            self._sprites["net"] = _load_sprite("proj_net.png", (44, 44), (90, 200, 255))
+            self._sprites["player"] = _load_sprite(
+                player_skin_filename(), (_sx(220), _sx(220)), (180, 120, 70)
+            )
+            self._sprites["bolt"] = _load_sprite("paw_bolt.png", (_sx(40), _sx(40)), (255, 180, 220))
+            self._sprites["enemy_bolt"] = _load_sprite(
+                "paw_enemy.png", (_sx(36), _sx(36)), (255, 90, 70)
+            )
+            self._sprites["treat"] = _load_sprite("proj_treat.png", (_sx(40), _sx(40)), (230, 160, 70))
+            self._sprites["net"] = _load_sprite("proj_net.png", (_sx(44), _sx(44)), (90, 200, 255))
             self._asset_phase = 1
             return True
         if self._asset_phase == 1:
@@ -448,9 +463,15 @@ class BoothBlaster:
             for name in MAID_SPRITES:
                 key = name.replace(".png", "")
                 self._sprites[key] = _load_sprite(name, maid_size, maid_color)
-            self._sprites["barrier"] = _load_sprite("barrier_crate.png", (120, 72), (40, 40, 48))
-            self._sprites["barrier_d1"] = _load_sprite("barrier_crate_d1.png", (120, 72), (40, 40, 48))
-            self._sprites["barrier_d2"] = _load_sprite("barrier_crate_d2.png", (120, 72), (40, 40, 48))
+            self._sprites["barrier"] = _load_sprite(
+                "barrier_crate.png", (_sx(120), _sx(72)), (40, 40, 48)
+            )
+            self._sprites["barrier_d1"] = _load_sprite(
+                "barrier_crate_d1.png", (_sx(120), _sx(72)), (40, 40, 48)
+            )
+            self._sprites["barrier_d2"] = _load_sprite(
+                "barrier_crate_d2.png", (_sx(120), _sx(72)), (40, 40, 48)
+            )
             self._asset_phase = 3
             return True
         if self._asset_phase == 3:
@@ -507,7 +528,7 @@ class BoothBlaster:
             pass
 
     def _spawn_barriers(self) -> None:
-        ys = HEIGHT - 420
+        ys = HEIGHT - _sx(420)
         xs = [WIDTH * 0.18, WIDTH * 0.38, WIDTH * 0.62, WIDTH * 0.82]
         self.barriers = [Barrier(x=x, y=ys, slot=i) for i, x in enumerate(xs)]
 
@@ -565,9 +586,9 @@ class BoothBlaster:
 
         rows = min(4, 3 + (wave_index - 1) // 2)
         cols = 6
-        top = 240
-        gap_x = 150
-        gap_y = 130
+        top = _sx(240)
+        gap_x = _sx(150)
+        gap_y = _sx(130)
         origin_x = WIDTH / 2 - (cols - 1) * gap_x / 2
 
         for r in range(rows):
@@ -613,19 +634,19 @@ class BoothBlaster:
             stats = ENEMY_STATS[EnemyKind.BOSS]
             hp = stats["hp"] + (wave - 1) * 4
             self.enemies = [
-                Enemy(kind=EnemyKind.BOSS, x=WIDTH / 2, y=320, hp=hp, col=0, row=0)
+                Enemy(kind=EnemyKind.BOSS, x=WIDTH / 2, y=_sx(320), hp=hp, col=0, row=0)
             ]
         elif wave == 2:
             stats = ENEMY_STATS[EnemyKind.BOSS_KITTEN]
             hp = stats["hp"] + (wave - 1) * 4
             self.enemies = [
-                Enemy(kind=EnemyKind.BOSS_KITTEN, x=WIDTH / 2, y=300, hp=hp, col=0, row=0)
+                Enemy(kind=EnemyKind.BOSS_KITTEN, x=WIDTH / 2, y=_sx(300), hp=hp, col=0, row=0)
             ]
         elif wave == 3:
             stats = ENEMY_STATS[EnemyKind.BOSS_NANA]
             hp = stats["hp"] + (wave - 1) * 4
             self.enemies = [
-                Enemy(kind=EnemyKind.BOSS_NANA, x=WIDTH / 2, y=300, hp=hp, col=0, row=0)
+                Enemy(kind=EnemyKind.BOSS_NANA, x=WIDTH / 2, y=_sx(300), hp=hp, col=0, row=0)
             ]
         else:
             # Match Nana cadence; two independent actors make this the hardest fight.
@@ -636,8 +657,8 @@ class BoothBlaster:
             self.enemies = [
                 Enemy(
                     kind=EnemyKind.BOSS_PARENT_A,
-                    x=WIDTH / 2 - 180,
-                    y=300,
+                    x=WIDTH / 2 - _sx(180),
+                    y=_sx(300),
                     hp=hp_a,
                     col=0,
                     row=0,
@@ -647,8 +668,8 @@ class BoothBlaster:
                 ),
                 Enemy(
                     kind=EnemyKind.BOSS_PARENT_B,
-                    x=WIDTH / 2 + 180,
-                    y=300,
+                    x=WIDTH / 2 + _sx(180),
+                    y=_sx(300),
                     hp=hp_b,
                     col=1,
                     row=0,

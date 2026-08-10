@@ -31,6 +31,25 @@ async def main() -> None:
     apply_mobile_runtime_tweaks()
     audio.init()
     pygame.display.set_caption(config.TITLE)
+    # #region agent log
+    try:
+        from core.debug_agent import agent_log
+
+        agent_log(
+            "H16",
+            "main",
+            "boot",
+            {
+                "build": getattr(config, "BUILD_ID", "?"),
+                "size": [config.WIDTH, config.HEIGHT],
+                "scale": getattr(config, "SCALE", 1.0),
+                "fps": config.FPS,
+                "web": is_web(),
+            },
+        )
+    except Exception:
+        pass
+    # #endregion
 
     screen = create_display((config.WIDTH, config.HEIGHT))
     canvas = pygame.Surface((config.WIDTH, config.HEIGHT))

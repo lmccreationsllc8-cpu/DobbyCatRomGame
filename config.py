@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -11,10 +12,15 @@ SPRITES_DIR = ASSETS_DIR / "sprites"
 AUDIO_DIR = ASSETS_DIR / "audio"
 FONTS_DIR = ASSETS_DIR / "fonts"
 
-# Portrait stage matching RCARS mock canvas
-WIDTH = 1080
-HEIGHT = 1920
+# Portrait stage matching RCARS mock canvas.
+# Web/WASM: half-res canvas (CSS upscales). Full 1080x1920 fullscreen blits
+# cost ~25ms/frame in pygbag and make the tab feel frozen.
+SCALE = 0.5 if sys.platform == "emscripten" else 1.0
+WIDTH = int(1080 * SCALE)
+HEIGHT = int(1920 * SCALE)
 FPS = 60
+# Bumped in web deploys so cached pygbag archives are easy to spot in logs.
+BUILD_ID = "7b7edde-scale"
 
 LEADERBOARD_PATH = ROOT / "data" / "leaderboard.json"
 MAX_ENTRIES = 10
