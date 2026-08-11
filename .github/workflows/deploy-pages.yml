@@ -89,10 +89,37 @@ jobs:
               text = text.replace("fb_ar   :  1.77", "fb_ar   :  0.5625")
               text = text.replace('fb_width : "1280"', 'fb_width : "540"')
               text = text.replace('fb_height : "720"', 'fb_height : "960"')
+              # Mobile browser smoothness: no rubber-band scroll / pinch zoom fighting drag.
+              mobile_meta = (
+                  '<meta name="viewport" content="width=device-width, initial-scale=1, '
+                  'maximum-scale=1, user-scalable=no, viewport-fit=cover">'
+              )
+              mobile_css = (
+                  "<style id=\"dobby-web-smooth\">"
+                  "html,body{margin:0;padding:0;overflow:hidden;background:#000;"
+                  "overscroll-behavior:none;touch-action:none;"
+                  "-webkit-user-select:none;user-select:none;}"
+                  "canvas{touch-action:none;image-rendering:pixelated;}"
+                  "</style>"
+              )
+              if 'name="viewport"' not in text:
+                  text = text.replace("<head>", "<head>\n" + mobile_meta, 1)
+              else:
+                  import re
+                  text = re.sub(
+                      r'<meta[^>]+name=["\']viewport["\'][^>]*>',
+                      mobile_meta,
+                      text,
+                      count=1,
+                  )
+              if 'id="dobby-web-smooth"' not in text:
+                  text = text.replace("</head>", mobile_css + "\n</head>", 1)
               path.write_text(text, encoding="utf-8")
               print("cache-busted", path, "sha", sha)
               if "fb_ar   :  0.5625" in text:
                   print("portrait fb_ar ok")
+              if 'id="dobby-web-smooth"' in text:
+                  print("mobile smooth css ok")
           PY
           ls -la web_src/build/web
           grep -n "web_src.tar.gz\|fb_ar\|fb_width\|fb_height" web_src/build/web/index.html | head -8

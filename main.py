@@ -19,6 +19,7 @@ from core.platform import (
     is_web,
     mixer_buffer,
     mixer_frequency,
+    web_tab_hidden,
 )
 from games.booth_blaster import LoadingScene
 
@@ -61,6 +62,11 @@ async def main() -> None:
     elapsed = 0.0
 
     while running:
+        # Background tabs: yield cheaply so mobile browsers don't throttle/kill us.
+        if web_tab_hidden():
+            await asyncio.sleep(0.25)
+            continue
+
         dt = clock.tick(config.FPS) / 1000.0
         elapsed += dt
 

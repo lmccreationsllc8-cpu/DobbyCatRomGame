@@ -35,5 +35,14 @@ Open http://localhost:8000 — tap/click once to start audio on mobile.
 - Drag to move Dobby
 - Tap / hold to fire
 - Mute chip and audio panel work as on Android
+- Tap/click once after load to unlock audio (Safari / mobile)
 
 Scores and mute settings store in the browser (`localStorage`).
+
+## Web smoothness notes
+
+- Half-res canvas (540×960) CSS-upscaled; 30 FPS; nearest-neighbor scale
+- Title BGM skipped on web (Safari/WASM freeze risk); in-game SFX/music still used
+- No mid-fight BGM track swaps on web
+- Background tabs pause the loop (saves battery / avoids browser throttling)
+- Deploy injects viewport + `touch-action: none` / no overscroll CSS into `index.html`

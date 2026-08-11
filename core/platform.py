@@ -94,13 +94,7 @@ def apply_mobile_runtime_tweaks() -> None:
         # 1080x1920 WASM draws are heavy; 30 FPS keeps the tab responsive.
         config.FPS = 30
         config.LEADERBOARD_PATH = leaderboard_path()
-        try:
-            import platform as _plat
-
-            # Keep chunky pixel look when the canvas is CSS-scaled.
-            _plat.window.canvas.style.imageRendering = "pixelated"
-        except Exception:
-            pass
+        _apply_web_browser_smoothness()
         return
     if not is_android():
         return
@@ -108,6 +102,58 @@ def apply_mobile_runtime_tweaks() -> None:
     config.IDLE_QUIT_SECONDS = 86_400.0
     config.FULLSCREEN = True
     config.LEADERBOARD_PATH = leaderboard_path()
+
+
+def _apply_web_browser_smoothness() -> None:
+    """Web-only DOM/CSS tweaks for smoother phone-browser play (no Android impact)."""
+    try:
+        import platform as _plat
+
+        # Keep chunky pixel look when the canvas is CSS-scaled.
+        canvas = _plat.window.canvas
+        canvas.style.imageRendering = "pixelated"
+        canvas.style.touchAction = "none"
+        canvas.style.userSelect = "none"
+        canvas.style.webkitUserSelect = "none"
+        canvas.style.webkitTouchCallout = "none"
+
+        doc = getattr(_plat.window, "document", None)
+        if doc is not None:
+            for tag in ("html", "body"):
+                try:
+                    el = doc.getElementsByTagName(tag)[0]
+                    el.style.margin = "0"
+                    el.style.padding = "0"
+                    el.style.overflow = "hidden"
+                    el.style.overscrollBehavior = "none"
+                    el.style.touchAction = "none"
+                    el.style.userSelect = "none"
+                    el.style.webkitUserSelect = "none"
+                    el.style.background = "#000"
+                except Exception:
+                    pass
+            # Long-press / right-click menus steal focus on mobile Safari.
+            try:
+                doc.addEventListener("contextmenu", lambda e: e.preventDefault())
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
+def web_tab_hidden() -> bool:
+    """True when the browser tab is in the background (web only)."""
+    if not is_web():
+        return False
+    try:
+        import platform as _plat
+
+        doc = getattr(_plat.window, "document", None)
+        if doc is None:
+            return False
+        return bool(getattr(doc, "hidden", False))
+    except Exception:
+        return False
 
 
 def mixer_frequency() -> int:
