@@ -344,6 +344,9 @@ def play_music(name: str, loop: bool = True) -> None:
         # #endregion
         _pending_music = None
         _music_fade_remaining = 0.0
+        # Soft platforms: telegraph boss handoff without music.load freeze.
+        if name == "boss":
+            play("wave_clear", volume=0.85)
         return
     _pending_music = None
     _music_fade_remaining = 0.0

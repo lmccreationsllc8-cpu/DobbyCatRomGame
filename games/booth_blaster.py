@@ -12,10 +12,10 @@ import pygame
 
 from config import BUILD_ID, HEIGHT, IDLE_QUIT_SECONDS, SCALE, SPRITES_DIR, WIDTH
 from core import audio, leaderboard, storage
-from core.audio_ui import AudioPanel, MuteChip
+from core.audio_ui import AudioPanel, HoldChip, MuteChip
 from core.initials_ui import ALPHABET, InitialsPicker
-from core.input import InputState, control_prompt_lines, window_to_logical
-from core.platform import load_font
+from core.input import InputState, control_prompt_lines, primary_pad_profile, window_to_logical
+from core.platform import is_android, is_web, load_font
 
 
 # --- Colors / palette (booth vibe) ---
@@ -154,6 +154,15 @@ BOSS_HUD_LABELS = {
     4: "CAT PARENTS!",
 }
 
+# Cheesy pre-boss title cards: (eyebrow, punch line).
+BOSS_CALLOUTS = {
+    1: ("Zoomies detected!", "Here comes Scooter Dog!"),
+    2: ("From the shadows...", "It's the Shadow Kitten!"),
+    3: ("Cookies won't save you!", "Here comes the Nana of Annihilation!"),
+    4: ("Oh no...", "It's the crazy Cat Parents!"),
+}
+BOSS_CALLOUT_DURATION = 2.4
+
 
 def load_player_skin_index() -> int:
     raw = storage.read_text(_SKIN_STORE)
@@ -189,6 +198,8 @@ PILLOW_FLY_Y = 180.0 * SCALE
 PILLOW_SPEED = 160.0 * SCALE
 VICTORY_DURATION = 4.0
 NET_SLOW_DURATION = 1.0
+TITLE_RETURN_HOLD = 0.75
+TITLE_CHIP_HOLD = 0.4
 NET_SPEED_MUL = 0.45
 
 
@@ -382,8 +393,7 @@ class BoothBlaster:
     BOLT_SPEED = -900.0 * SCALE
     ENEMY_BOLT_SPEED = 420.0 * SCALE
 
-    def __init__(self, from_title: bool = True) -> None:
-        self.from_title = from_title
+    def __init__(self) -> None:
         self.score = 0
         self.wave = WaveState()
         self.player = Player(x=WIDTH / 2, y=HEIGHT - _sx(PLAYER_SPAWN_BOTTOM))
@@ -396,6 +406,8 @@ class BoothBlaster:
         self.victory_timer = 0.0
         self.victory_particles: list[dict] = []
         self.won_wave_flash = 0.0
+        self._banner_timer = 0.0
+        self._banner_msg = ""
         self.dir = 1.0
         self.step_timer = 0.0
         self.step_interval = 0.55
@@ -415,10 +427,20 @@ class BoothBlaster:
         self._initial_idx = 0
         self._letter_cooldown = 0.0
         self._mute_chip = MuteChip((_sx(40), _sx(100)))
+        title_x = self._mute_chip.rect.right + _sx(16)
+        self._title_chip = HoldChip(
+            (title_x, _sx(100)), label="TITLE", hold_seconds=TITLE_CHIP_HOLD
+        )
+        self._title_start_hold = 0.0
+        self._pending_title_return = False
+        self._end_choice = 0  # 0=Play again, 1=Title
+        self._end_choice_cooldown = 0.0
+        self._pending_end_confirm = False
         self._initials_picker: Optional[InitialsPicker] = None
         self._block_fire = False
         self._spawn_barriers()
         self._spawn_wave(self.wave.index)
+        self._show_banner("Drag to move · hold to fire", 2.0)
         # #region agent log
         try:
             from core.debug_agent import agent_log
@@ -606,6 +628,16 @@ class BoothBlaster:
         # Bottom: BOX + ZIPTIE
         return EnemyKind.BOX if col % 2 == 0 else EnemyKind.ZIPTIE
 
+    def _show_banner(self, msg: str, duration: float = 1.0) -> None:
+        """Non-freezing HUD banner (unlike won_wave_flash, gameplay continues)."""
+        self._banner_msg = msg
+        self._banner_timer = float(duration)
+
+    def _return_to_title(self) -> "TitleScene":
+        audio.play("ui_confirm")
+        audio.stop_music(fade_ms=200)
+        return TitleScene()
+
     def _spawn_wave(self, wave_index: int) -> None:
         self.enemies.clear()
         self.bolts = [b for b in self.bolts if b.friendly]
@@ -615,10 +647,12 @@ class BoothBlaster:
         self.wave.boss_pending = False
         self.wave.boss_active = False
         self.wave.clear_timer = 0.0
+        self._spawn_barriers()
 
-        # Final wave is parents-only — no formation or pillow.
+        # Final wave is parents-only — no formation or pillow; show callout first.
         if wave_index >= CAMPAIGN_WAVES:
-            self._spawn_boss()
+            self.wave.boss_pending = True
+            self.won_wave_flash = BOSS_CALLOUT_DURATION
             return
 
         rows = min(4, 3 + (wave_index - 1) // 2)
@@ -791,6 +825,13 @@ class BoothBlaster:
             if event.key == pygame.K_m:
                 audio.toggle_mute()
                 audio.play("ui_blip")
+            elif event.key == pygame.K_t and not self._entering_score:
+                self._pending_title_return = True
+
+        if event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+            self._title_chip.end_hold()
+        elif event.type == pygame.FINGERUP:
+            self._title_chip.end_hold()
 
         pos: Optional[tuple[int, int]] = None
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
@@ -803,6 +844,21 @@ class BoothBlaster:
 
         if pos is None:
             return
+
+        if self.game_over and not self._entering_score:
+            again_r, title_r = self._end_choice_rects()
+            if again_r.collidepoint(pos):
+                self._end_choice = 0
+                self._pending_end_confirm = True
+                self.idle_timer = 0.0
+                self._block_fire = True
+                return
+            if title_r.collidepoint(pos):
+                self._end_choice = 1
+                self._pending_end_confirm = True
+                self.idle_timer = 0.0
+                self._block_fire = True
+                return
 
         if self._entering_score and self._initials_picker is not None:
             consumed, self._initial_idx = self._initials_picker.handle_click(
@@ -817,6 +873,11 @@ class BoothBlaster:
                 return
 
         if self._mute_chip.handle_click(pos):
+            self.idle_timer = 0.0
+            self._block_fire = True
+            return
+
+        if not self.game_over and self._title_chip.begin_hold(pos):
             self.idle_timer = 0.0
             self._block_fire = True
 
@@ -872,9 +933,33 @@ class BoothBlaster:
             except Exception:
                 self._debug_boss_jumped = True
 
+        if self._banner_timer > 0:
+            self._banner_timer = max(0.0, self._banner_timer - dt)
+
+        # Title return: chip hold / T / pad Start hold (not during initials).
+        if not self._entering_score and not self.game_over:
+            if self._title_chip.update(dt):
+                self._pending_title_return = True
+            if inp.start_held:
+                self._title_start_hold += dt
+                if self._title_start_hold >= TITLE_RETURN_HOLD:
+                    self._pending_title_return = True
+            else:
+                self._title_start_hold = 0.0
+            if self._pending_title_return:
+                self._pending_title_return = False
+                self._title_chip.end_hold()
+                self._title_start_hold = 0.0
+                return self._return_to_title()
+        else:
+            self._title_chip.end_hold()
+            self._title_start_hold = 0.0
+            self._pending_title_return = False
+
+        freeze_idle = self._entering_score or self.victory_timer > 0
         if inp.any_activity:
             self.idle_timer = 0.0
-        else:
+        elif not freeze_idle:
             self.idle_timer += dt
             if self.idle_timer >= IDLE_QUIT_SECONDS:
                 self.exit_requested = True
@@ -903,11 +988,17 @@ class BoothBlaster:
                 return self
             if self._entering_score:
                 self._update_initials_entry(dt, inp)
-            elif inp.confirm_pressed:
-                if self.campaign_won:
-                    audio.play("ui_confirm")
-                    return TitleScene()
-                self._restart()
+            else:
+                self._end_choice_cooldown = max(0.0, self._end_choice_cooldown - dt)
+                if self._end_choice_cooldown <= 0 and abs(inp.move_x) > 0.4:
+                    self._end_choice = 1 if inp.move_x > 0 else 0
+                    self._end_choice_cooldown = 0.2
+                    audio.play("ui_blip")
+                if self._pending_end_confirm or inp.confirm_pressed:
+                    self._pending_end_confirm = False
+                    if self._end_choice == 1:
+                        return self._return_to_title()
+                    self._restart()
             return self
 
         if self.won_wave_flash > 0:
@@ -928,7 +1019,13 @@ class BoothBlaster:
             self.player.x += inp.move_x * speed * dt
             self.player.x = max(margin, min(WIDTH - margin, self.player.x))
 
-        if (inp.fire_pressed or (inp.fire_held and self.player.cooldown <= 0)) and self.player.cooldown <= 0:
+        suppress_fire = self._block_fire
+        self._block_fire = False
+        if (
+            not suppress_fire
+            and (inp.fire_pressed or (inp.fire_held and self.player.cooldown <= 0))
+            and self.player.cooldown <= 0
+        ):
             self.bolts.append(
                 Bolt(self.player.x, self.player.y - self.player.h / 2, self.BOLT_SPEED, True, kind="paw")
             )
@@ -1032,7 +1129,7 @@ class BoothBlaster:
                     audio.play_music("game")
             elif not self.wave.boss_pending and self.wave.clear_timer <= 0:
                 self.wave.boss_pending = True
-                self.won_wave_flash = 1.0
+                self.won_wave_flash = BOSS_CALLOUT_DURATION
                 self.score += 50
                 audio.play("wave_clear")
 
@@ -1049,12 +1146,20 @@ class BoothBlaster:
                 self._spawn_wave(self.wave.index)
 
         # Lose if formation enemies reach bottom (flyers stay in the upper lane)
+        reached = False
         for e in self.enemies:
             if e.is_flyer:
                 continue
             if e.rect.bottom >= self.player.rect.top - _sx(10):
-                self._player_hit()
-                e.y -= _sx(40)  # nudge so we don't multi-hit every frame
+                reached = True
+                break
+        if reached:
+            self._player_hit()
+            push = _sx(120)
+            for e in self.enemies:
+                if not e.is_flyer:
+                    e.y -= push
+            self._show_banner("FORMATION REACHED YOU!", 1.0)
 
         return self
 
@@ -1208,6 +1313,19 @@ class BoothBlaster:
             else None
         )
         self._block_fire = False
+        # Win defaults to Title; lose defaults to Play again.
+        self._end_choice = 1 if self.campaign_won else 0
+        self._end_choice_cooldown = 0.0
+
+    def _end_choice_rects(self) -> tuple[pygame.Rect, pygame.Rect]:
+        cy = HEIGHT // 2 - _sx(60)
+        w, h = _sx(280), _sx(72)
+        gap = _sx(24)
+        again = pygame.Rect(0, 0, w, h)
+        title = pygame.Rect(0, 0, w, h)
+        again.center = (WIDTH // 2 - w // 2 - gap // 2, cy)
+        title.center = (WIDTH // 2 + w // 2 + gap // 2, cy)
+        return again, title
 
     def _submit_initials(self) -> None:
         if is_practice_skin():
@@ -1276,13 +1394,20 @@ class BoothBlaster:
         self.victory_timer = 0.0
         self.victory_particles.clear()
         self.won_wave_flash = 0.0
+        self._banner_timer = 0.0
+        self._banner_msg = ""
         self.idle_timer = 0.0
         self._entering_score = False
         self._score_saved = False
         self._initials_picker = None
         self._block_fire = False
+        self._title_chip.end_hold()
+        self._title_start_hold = 0.0
+        self._pending_title_return = False
+        self._end_choice = 0
         self._spawn_barriers()
         self._spawn_wave(1)
+        self._show_banner("Drag to move · hold to fire", 2.0)
         # #region agent log
         try:
             from core.debug_agent import agent_log
@@ -1361,28 +1486,45 @@ class BoothBlaster:
             surface.blit(spr, spr.get_rect(center=(int(b.x), int(b.y))))
 
         # HUD (cache font renders — WASM font.render every frame is costly)
-        lives_txt = "INF" if is_practice_skin() else str(self.player.lives)
+        practice = is_practice_skin()
+        lives_txt = "INF" if practice else str(self.player.lives)
         hud = f"SCORE {self.score:05d}   LIVES {lives_txt}   WAVE {self.wave.index}/{CAMPAIGN_WAVES}"
+        if practice:
+            hud = f"{hud}   PRACTICE"
         if getattr(self, "_hud_key", None) != hud:
             self._hud_key = hud
             self._hud_surf = self._font.render(hud, True, HUD_COLOR)
         surface.blit(self._hud_surf, (_sx(40), _sx(40)))
         self._mute_chip.draw(surface)
+        if not self.game_over:
+            self._title_chip.draw(surface)
         if self.wave.boss_active:
             label = BOSS_HUD_LABELS.get(self.wave.index, "BOSS!")
             if getattr(self, "_boss_hud_key", None) != label:
                 self._boss_hud_key = label
                 self._boss_hud_surf = self._font.render(label, True, ACCENT)
-            surface.blit(self._boss_hud_surf, (_sx(180), _sx(110)))
+            # Below MUTE/TITLE chips so labels do not collide.
+            surface.blit(self._boss_hud_surf, (_sx(40), _sx(160)))
 
         if self.won_wave_flash > 0:
-            msg = "BOSS INCOMING!" if self.wave.boss_pending else "WAVE CLEAR!"
-            if getattr(self, "_flash_msg_key", None) != msg:
-                self._flash_msg_key = msg
-                self._flash_msg_surf = self._font_lg.render(msg, True, OK)
+            if self.wave.boss_pending:
+                self._draw_boss_callout(surface)
+            else:
+                msg = "WAVE CLEAR!"
+                if getattr(self, "_flash_msg_key", None) != msg:
+                    self._flash_msg_key = msg
+                    self._flash_msg_surf = self._font_lg.render(msg, True, OK)
+                surface.blit(
+                    self._flash_msg_surf,
+                    self._flash_msg_surf.get_rect(center=(WIDTH // 2, HEIGHT // 2 - _sx(80))),
+                )
+        elif self._banner_timer > 0 and self._banner_msg:
+            if getattr(self, "_banner_surf_key", None) != self._banner_msg:
+                self._banner_surf_key = self._banner_msg
+                self._banner_surf = self._font_lg.render(self._banner_msg, True, ACCENT)
             surface.blit(
-                self._flash_msg_surf,
-                self._flash_msg_surf.get_rect(center=(WIDTH // 2, HEIGHT // 2 - _sx(80))),
+                self._banner_surf,
+                self._banner_surf.get_rect(center=(WIDTH // 2, HEIGHT // 2 - _sx(80))),
             )
 
         if self.victory_timer > 0:
@@ -1413,11 +1555,55 @@ class BoothBlaster:
                 if self._score_saved:
                     saved = self._font.render("Score saved!", True, OK)
                     surface.blit(saved, saved.get_rect(center=(WIDTH // 2, HEIGHT // 2 - _sx(120))))
-                tip_label = "Title" if self.campaign_won else "Restart"
-                tip_text, _, _ = control_prompt_lines(tip_label)
-                tip = self._font.render(tip_text, True, HUD_COLOR)
-                surface.blit(tip, tip.get_rect(center=(WIDTH // 2, HEIGHT // 2 - _sx(60))))
-                self._draw_leaderboard(surface, HEIGHT // 2 + _sx(20))
+                again_r, title_r = self._end_choice_rects()
+                for idx, (rect, label) in enumerate(
+                    ((again_r, "Play again"), (title_r, "Title"))
+                ):
+                    selected = self._end_choice == idx
+                    color = OK if selected else HUD_COLOR
+                    pygame.draw.rect(surface, color, rect, width=3 if selected else 2, border_radius=_sx(12))
+                    txt = self._font.render(label, True, color)
+                    surface.blit(txt, txt.get_rect(center=rect.center))
+                tip = self._font.render("Left/Right choose · Start confirm", True, HUD_COLOR)
+                surface.blit(tip, tip.get_rect(center=(WIDTH // 2, HEIGHT // 2 + _sx(20))))
+                self._draw_leaderboard(surface, HEIGHT // 2 + _sx(80))
+
+    def _draw_boss_callout(self, surface: pygame.Surface) -> None:
+        """Large cheesy title card before each boss fight."""
+        assert self._font and self._font_lg
+        opener, punch = BOSS_CALLOUTS.get(
+            self.wave.index, ("Uh-oh!", "Boss incoming!")
+        )
+        key = (self.wave.index, opener, punch, WIDTH)
+        if getattr(self, "_callout_key", None) != key:
+            self._callout_key = key
+            self._callout_opener = self._font.render(opener, True, ACCENT)
+            max_w = WIDTH - _sx(80)
+            punch_surf = self._font_lg.render(punch, True, OK)
+            if punch_surf.get_width() <= max_w:
+                self._callout_punch_lines = [punch_surf]
+            else:
+                # Prefer a natural break near the middle for long cheesy lines.
+                words = punch.split()
+                mid = max(1, len(words) // 2)
+                line1 = " ".join(words[:mid])
+                line2 = " ".join(words[mid:])
+                self._callout_punch_lines = [
+                    self._font_lg.render(line1, True, OK),
+                    self._font_lg.render(line2, True, OK),
+                ]
+        overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        overlay.fill((10, 8, 24, 140))
+        surface.blit(overlay, (0, 0))
+        cy = HEIGHT // 2 - _sx(40)
+        surface.blit(
+            self._callout_opener,
+            self._callout_opener.get_rect(center=(WIDTH // 2, cy - _sx(90))),
+        )
+        y = cy - _sx(10)
+        for line in self._callout_punch_lines:
+            surface.blit(line, line.get_rect(center=(WIDTH // 2, y)))
+            y += _sx(78)
 
     def _draw_leaderboard(self, surface: pygame.Surface, top_y: int) -> None:
         assert self._font and self._font_lg
@@ -1666,12 +1852,14 @@ class TitleScene:
         self._phoenix_done = False
         self._phoenix_active = False
         self._phoenix_t = 0.0
+        self._phoenix_fun_timer = 0.0
         self._prev_up = False
         self._prev_skin_dir = 0
         self._touch_konami = False  # touch handled konami this frame; skip pad/key fire
         self._skin_index = load_player_skin_index()
         self._skin_preview: Optional[pygame.Surface] = None
         self._skin_label = ""
+        self._skin_practice = False
         # #region agent log
         try:
             from core.debug_agent import agent_log
@@ -1756,11 +1944,12 @@ class TitleScene:
 
     def _reload_skin_preview(self) -> None:
         name = player_skin_filename(self._skin_index)
-        self._skin_preview = _load_sprite(name, (_sx(180), _sx(180)), (180, 120, 70))
+        self._skin_preview = _load_sprite(name, (_sx(280), _sx(280)), (180, 120, 70))
         label = name.replace("player_dobby_", "").replace(".png", "").replace("_", " ").upper()
         if name in PRACTICE_SKINS:
             label = f"{label}  INF"
         self._skin_label = label
+        self._skin_practice = name in PRACTICE_SKINS
 
     def _cycle_skin(self, delta: int) -> None:
         if not PLAYER_SKINS:
@@ -1775,15 +1964,15 @@ class TitleScene:
 
     def _skin_hit_rects(self) -> tuple[pygame.Rect, pygame.Rect, pygame.Rect]:
         """Left arrow, preview, right arrow — title skin cycle touch targets."""
-        cy = HEIGHT // 2 + _sx(520)
-        preview = pygame.Rect(0, 0, _sx(180), _sx(180))
+        cy = HEIGHT // 2 + _sx(480)
+        preview = pygame.Rect(0, 0, _sx(280), _sx(280))
         preview.center = (WIDTH // 2, cy)
-        left = pygame.Rect(0, 0, _sx(96), _sx(96))
+        left = pygame.Rect(0, 0, _sx(120), _sx(120))
         left.centery = cy
-        left.right = preview.left - _sx(24)
-        right = pygame.Rect(0, 0, _sx(96), _sx(96))
+        left.right = preview.left - _sx(28)
+        right = pygame.Rect(0, 0, _sx(120), _sx(120))
         right.centery = cy
-        right.left = preview.right + _sx(24)
+        right.left = preview.right + _sx(28)
         return left, preview, right
 
     def _phoenix_total_dur(self) -> float:
@@ -1820,6 +2009,7 @@ class TitleScene:
         self._phoenix_done = True
         self._phoenix_active = True
         self._phoenix_t = 0.0
+        self._phoenix_fun_timer = 2.5
         self._block_confirm = True
         self.idle_timer = 0.0
         audio.play("phoenix_screech")
@@ -1915,7 +2105,7 @@ class TitleScene:
                         pass
                     # #endregion
                     audio.play("ui_confirm")
-                    return BoothBlaster(from_title=True)
+                    return BoothBlaster()
             except Exception:
                 pass
         # Unlock music on any post-splash gesture (required on Safari/WebAudio).
@@ -1963,6 +2153,9 @@ class TitleScene:
             except Exception:
                 pass
             # #endregion
+
+        if self._phoenix_fun_timer > 0:
+            self._phoenix_fun_timer = max(0.0, self._phoenix_fun_timer - dt)
 
         # Phoenix burn sequence: ignore start confirm; keep kiosk idle from firing.
         if self._phoenix_active:
@@ -2035,7 +2228,7 @@ class TitleScene:
 
                 _t0 = _t.perf_counter()
                 agent_log("H8", "TitleScene.update", "creating BoothBlaster", {})
-                _game = BoothBlaster(from_title=True)
+                _game = BoothBlaster()
                 agent_log(
                     "H8",
                     "TitleScene.update",
@@ -2054,6 +2247,17 @@ class TitleScene:
             # #endregion
         return self
 
+    def _start_prompt_line(self) -> str:
+        """Primary start hint: browser vs app vs pad/desktop."""
+        if is_web():
+            return "Click or tap to start"
+        if is_android():
+            return "Tap to start"
+        if primary_pad_profile() is not None:
+            tip_text, _, _ = control_prompt_lines("Start")
+            return tip_text
+        return "Click or press Space to start"
+
     def _rebuild_title_static(self) -> None:
         """Cache gradient + fonts into one opaque surface (H7: 25-75ms/frame before)."""
         assert self._font and self._font_lg and self._font_sm
@@ -2061,7 +2265,8 @@ class TitleScene:
         BoothBlaster._draw_gradient_bg(layer)
         title = self._font_lg.render("BOOTH BLASTER", True, ACCENT)
         sub = self._font.render("Laser Monkey vs the Con Crowd", True, HUD_COLOR)
-        tip_text, tip2_text, tip3_text = control_prompt_lines("Start")
+        _, tip2_text, tip3_text = control_prompt_lines("Start")
+        tip_text = self._start_prompt_line()
         tip = self._font.render(tip_text, True, OK)
         tip2 = self._font.render(tip2_text, True, HUD_COLOR)
         tip3 = self._font.render(tip3_text, True, HUD_COLOR)
@@ -2089,8 +2294,11 @@ class TitleScene:
         right_lbl = self._font_lg.render(">", True, HUD_COLOR)
         layer.blit(left_lbl, left_lbl.get_rect(center=left.center))
         layer.blit(right_lbl, right_lbl.get_rect(center=right.center))
-        skin_name = self._font_sm.render(self._skin_label, True, OK)
+        skin_name = self._font.render(self._skin_label, True, OK)
         layer.blit(skin_name, skin_name.get_rect(center=(WIDTH // 2, preview.bottom + _sx(28))))
+        if getattr(self, "_skin_practice", False):
+            prac = self._font_sm.render("PRACTICE — scores not saved", True, DANGER)
+            layer.blit(prac, prac.get_rect(center=(WIDTH // 2, preview.bottom + _sx(68))))
         self._title_static = layer
         self._title_static_skin = self._skin_index
 
@@ -2194,3 +2402,6 @@ class TitleScene:
             return
         self._draw_title_base(surface)
         self._draw_phoenix_fx(surface)
+        if self._phoenix_fun_timer > 0:
+            note = self._font.render("Just for fun!", True, ACCENT)
+            surface.blit(note, note.get_rect(center=(WIDTH // 2, HEIGHT // 2 + _sx(200))))

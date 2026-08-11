@@ -33,7 +33,7 @@ class CampaignBossTests(unittest.TestCase):
             pass
 
     def test_spawn_boss_by_wave(self) -> None:
-        game = BoothBlaster(from_title=False)
+        game = BoothBlaster()
         game.wave.index = 1
         game._spawn_boss()
         self.assertEqual([e.kind for e in game.enemies], [EnemyKind.BOSS])
@@ -53,16 +53,31 @@ class CampaignBossTests(unittest.TestCase):
         self.assertEqual(len(kinds), 2)
 
     def test_final_wave_is_boss_only(self) -> None:
-        game = BoothBlaster(from_title=False)
+        game = BoothBlaster()
         game.wave.index = CAMPAIGN_WAVES
         game._spawn_wave(CAMPAIGN_WAVES)
+        # Parents-only wave starts with a callout, then the dual boss.
+        self.assertTrue(game.wave.boss_pending)
+        self.assertFalse(game.wave.boss_active)
+        self.assertEqual(game.enemies, [])
+        self.assertGreater(game.won_wave_flash, 0.0)
+        game._spawn_boss()
         self.assertTrue(game.wave.boss_active)
         kinds = {e.kind for e in game.enemies}
         self.assertEqual(kinds, {EnemyKind.BOSS_PARENT_A, EnemyKind.BOSS_PARENT_B})
         self.assertFalse(any(e.kind == EnemyKind.PILLOW for e in game.enemies))
 
+    def test_boss_callouts_cover_campaign(self) -> None:
+        from games.booth_blaster import BOSS_CALLOUTS
+
+        for wave in range(1, CAMPAIGN_WAVES + 1):
+            self.assertIn(wave, BOSS_CALLOUTS)
+            opener, punch = BOSS_CALLOUTS[wave]
+            self.assertTrue(opener)
+            self.assertTrue(punch)
+
     def test_final_boss_starts_victory(self) -> None:
-        game = BoothBlaster(from_title=False)
+        game = BoothBlaster()
         game.wave.index = CAMPAIGN_WAVES
         game.wave.boss_active = True
         game.enemies.clear()
@@ -98,7 +113,7 @@ class CampaignBossTests(unittest.TestCase):
         practice_idx = PLAYER_SKINS.index("player_dobby_thriller.png")
         with mock.patch("games.booth_blaster.load_player_skin_index", return_value=practice_idx):
             self.assertTrue(is_practice_skin())
-            game = BoothBlaster(from_title=False)
+            game = BoothBlaster()
             game.player.lives = 1
             game.player.invuln = 0.0
             game._player_hit("paw")
@@ -119,8 +134,27 @@ class CampaignBossTests(unittest.TestCase):
         self.assertAlmostEqual(boss_step_interval(4), boss_step_interval(3))
         self.assertAlmostEqual(boss_shoot_rate(4), boss_shoot_rate(3))
 
+    def test_barriers_refresh_each_wave(self) -> None:
+        game = BoothBlaster()
+        game.barriers.clear()
+        game._spawn_wave(2)
+        self.assertGreaterEqual(len(game.barriers), 1)
+        game.barriers.clear()
+        game._spawn_wave(4)
+        self.assertGreaterEqual(len(game.barriers), 1)
+
+    def test_end_choice_defaults(self) -> None:
+        game = BoothBlaster()
+        game.campaign_won = False
+        game._begin_score_entry()
+        self.assertEqual(game._end_choice, 0)
+        game.campaign_won = True
+        game.score = 0
+        game._begin_score_entry()
+        self.assertEqual(game._end_choice, 1)
+
     def test_parents_spawn_independent_and_match_nana_cadence(self) -> None:
-        game = BoothBlaster(from_title=False)
+        game = BoothBlaster()
         game.wave.index = 3
         game._spawn_boss()
         nana_interval = game.step_interval

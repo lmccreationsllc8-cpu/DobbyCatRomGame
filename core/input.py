@@ -106,6 +106,8 @@ class InputState:
     confirm_pressed: bool = False
     exit_held: bool = False
     exit_ready: bool = False
+    # Pad Start/Options held (excludes buttons that are also Select — for title-return hold).
+    start_held: bool = False
     any_activity: bool = False
     # Absolute finger/mouse X in logical canvas coords while a play touch is held.
     aim_x: Optional[float] = None
@@ -213,6 +215,7 @@ class InputManager:
         fire_held = False
         confirm_raw = False
         select_held = False
+        start_held = False
         activity = False
         aim_x: Optional[float] = None
 
@@ -287,6 +290,13 @@ class InputManager:
                     confirm_raw = True
                     activity = True
                     break
+            # Title-return hold: Start buttons that are not also Select (btn 6 overlaps defaults).
+            start_only = start_btns - select_btns
+            for idx in start_only:
+                if nbtn > idx and joy.get_button(idx):
+                    start_held = True
+                    activity = True
+                    break
 
         # Touch / mouse pointers — drag to steer, hold to auto-fire (full width).
         if self._pointers:
@@ -329,6 +339,7 @@ class InputManager:
             confirm_pressed=confirm_pressed,
             exit_held=exit_held,
             exit_ready=self._exit_hold >= EXIT_COMBO_HOLD_SECONDS,
+            start_held=start_held,
             any_activity=activity,
             aim_x=aim_x,
         )

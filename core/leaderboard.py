@@ -1,6 +1,6 @@
 """Local high-score leaderboard (JSON on disk or browser localStorage).
 
-DBY is always first place at the hard-coded perfect campaign score.
+DBY is always first place at the hard-coded vanity top score.
 Only human scores are persisted.
 """
 

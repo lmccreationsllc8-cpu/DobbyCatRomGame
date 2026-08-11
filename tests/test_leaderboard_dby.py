@@ -19,7 +19,10 @@ class DbyScoreTests(unittest.TestCase):
                 json.dumps([{"name": "AAA", "score": 100, "wave": 1}]),
                 encoding="utf-8",
             )
-            with mock.patch("core.leaderboard.storage.read_text", side_effect=lambda _n: store.read_text(encoding="utf-8")):
+            with mock.patch(
+                "core.leaderboard.storage.read_text",
+                side_effect=lambda _n: store.read_text(encoding="utf-8"),
+            ):
                 with mock.patch("core.leaderboard.storage.write_text"):
                     scores = leaderboard.load_scores()
             self.assertEqual(scores[0].name, "DBY")
@@ -34,7 +37,10 @@ class DbyScoreTests(unittest.TestCase):
                 json.dumps([{"name": "ZZZ", "score": 90000, "wave": 3}]),
                 encoding="utf-8",
             )
-            with mock.patch("core.leaderboard.storage.read_text", side_effect=lambda _n: store.read_text(encoding="utf-8")):
+            with mock.patch(
+                "core.leaderboard.storage.read_text",
+                side_effect=lambda _n: store.read_text(encoding="utf-8"),
+            ):
                 scores = leaderboard.load_scores()
             self.assertEqual(scores[0].name, "DBY")
             self.assertEqual(scores[0].score, 99999)

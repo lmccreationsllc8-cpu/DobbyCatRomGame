@@ -17,7 +17,7 @@ When launched from RCARS (home monkey logo long-press), the control process sets
 
 `create_display()` uses `pygame.display.set_mode(..., display=index)` sized from `get_desktop_sizes()[index]` — do not rely on `SDL_VIDEO_FULLSCREEN_DISPLAY` alone (pygame FULLSCREEN without `display=` lands on the primary touch bar).
 
-Idle quit and **Select+Start** exit with code **0** so RCARS restores attract. See RCARS `docs/runbook.md` § Booth Blaster.
+Idle quit and **hold Select** (~1.25s) exit with code **0** so RCARS restores attract. Mid-run **TITLE** chip (hold ~0.4s) or **hold Start** (~0.75s) returns to the title screen without quitting the process. See RCARS `docs/runbook.md` § Booth Blaster.
 
 ## Plug in
 
@@ -34,8 +34,9 @@ Booth pad on LaserMonkeyKiosk2 is a **DragonRise** USB dongle (`lsusb`: `0079:01
 |---|---|---|
 | Move | D-pad → axes **0** / **1** | Hat may also report; code reads both |
 | Fire / confirm | Face buttons **0–3** (X/A/B/Y) | All face buttons fire for booth use |
-| Select / Start | **8** / **9** | Quit combo |
-| Quit | **Select + Start** hold (~1.25s) | Same combo as DualShock |
+| Select / Start | **8** / **9** | Separate: quit vs confirm / title-return |
+| Return to title | Hold **Start** (~0.75s) or TITLE chip | Does not exit the process |
+| Quit app | Hold **Select** (~1.25s) | Esc / Share on other profiles; same as DualShock |
 
 Pinned on the Pi in `/etc/rcars/rcars.env` (inherited by the game via control):
 
@@ -74,4 +75,4 @@ export DOBBY_PAD_START=7,9
 
 ## DualShock
 
-No extra setup: Cross fires, Share/Options (and common remaps) drive Select/Start for the quit combo.
+No extra setup: Cross fires; Share hold quits the app; Options confirms / Start-hold returns to title.

@@ -219,3 +219,64 @@ class MuteChip:
             self._cache = chip
             self._cache_muted = muted
         surface.blit(self._cache, self.rect.topleft)
+
+
+class HoldChip:
+    """HUD chip that fires only after being held for ``hold_seconds`` (anti-mis-tap)."""
+
+    def __init__(
+        self,
+        topleft: tuple[int, int],
+        label: str = "TITLE",
+        hold_seconds: float = 0.4,
+        width: int | None = None,
+    ) -> None:
+        self._font = load_font(28)
+        self.label = label
+        self.hold_seconds = float(hold_seconds)
+        w = max(1, int((width if width is not None else 110) * SCALE))
+        h = max(1, int(48 * SCALE))
+        self.rect = pygame.Rect(topleft[0], topleft[1], w, h)
+        self._holding = False
+        self._hold = 0.0
+        self._armed = False  # True for one frame when hold completes
+
+    def begin_hold(self, pos: tuple[int, int]) -> bool:
+        if not self.rect.collidepoint(pos):
+            return False
+        self._holding = True
+        self._hold = 0.0
+        self._armed = False
+        return True
+
+    def end_hold(self) -> None:
+        self._holding = False
+        self._hold = 0.0
+
+    def update(self, dt: float) -> bool:
+        """Advance hold; return True once when threshold reached."""
+        self._armed = False
+        if not self._holding:
+            return False
+        self._hold += dt
+        if self._hold >= self.hold_seconds:
+            self._holding = False
+            self._hold = 0.0
+            self._armed = True
+            return True
+        return False
+
+    def draw(self, surface: pygame.Surface) -> None:
+        color = ACCENT if self._holding else OK
+        chip = pygame.Surface(self.rect.size, pygame.SRCALPHA)
+        chip.fill((20, 24, 40, 180))
+        pygame.draw.rect(chip, color, chip.get_rect(), width=2, border_radius=10)
+        if self._holding and self.hold_seconds > 0:
+            frac = min(1.0, self._hold / self.hold_seconds)
+            fill = pygame.Rect(0, 0, int(self.rect.width * frac), self.rect.height)
+            fill_surf = pygame.Surface(self.rect.size, pygame.SRCALPHA)
+            fill_surf.fill((*ACCENT[:3], 70))
+            chip.blit(fill_surf, (0, 0), fill)
+        text = self._font.render(self.label, True, color)
+        chip.blit(text, text.get_rect(center=chip.get_rect().center))
+        surface.blit(chip, self.rect.topleft)
