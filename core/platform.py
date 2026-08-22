@@ -9,6 +9,7 @@ from pathlib import Path
 import pygame
 
 import config
+from core.display_mode import resolve_fullscreen_mode
 
 # Bundled monospace font for Android (SysFont consolas is missing there).
 FONT_CANDIDATES = (
@@ -234,16 +235,25 @@ def _desktop_size_for(display: int, fallback: tuple[int, int]) -> tuple[int, int
     return fallback
 
 
-def _set_mode_fullscreen(size: tuple[int, int], display: int) -> pygame.Surface:
+def _fullscreen_flags(use_scaled: bool) -> int:
+    flags = pygame.FULLSCREEN
+    if use_scaled and hasattr(pygame, "SCALED"):
+        flags |= pygame.SCALED
+    return flags
+
+
+def _set_mode_fullscreen(
+    size: tuple[int, int],
+    display: int,
+    flags: int | None = None,
+) -> pygame.Surface:
     """Fullscreen on a specific monitor (stage TV). Never silently retarget display 0."""
+    mode_flags = pygame.FULLSCREEN if flags is None else flags
     try:
-        return pygame.display.set_mode(size, pygame.FULLSCREEN, display=display)
+        return pygame.display.set_mode(size, mode_flags, display=display)
     except TypeError:
         # Older pygame without display= — rely on SDL_VIDEO_FULLSCREEN_DISPLAY / WINDOW_POS.
-        return pygame.display.set_mode(size, pygame.FULLSCREEN)
-    except pygame.error:
-        # Retry once without an explicit index; env WINDOW_POS may still place it.
-        return pygame.display.set_mode(size, pygame.FULLSCREEN)
+        return pygame.display.set_mode(size, mode_flags)
 
 
 def create_display(logical_size: tuple[int, int]) -> pygame.Surface:
@@ -252,11 +262,24 @@ def create_display(logical_size: tuple[int, int]) -> pygame.Surface:
     if is_web():
         # Browser canvas is CSS-scaled by the pygbag template; keep native logical size.
         return pygame.display.set_mode(logical_size)
-    if is_android() or config.FULLSCREEN:
+    if is_android():
+        # Stay at logical 1080x1920. Matching screen==canvas avoids a CPU
+        # smoothscale every frame (very costly on high-DPI phones).
+        # Android/SDL letterboxes or scales the surface via the compositor.
+        return pygame.display.set_mode(logical_size, pygame.FULLSCREEN)
+    if config.FULLSCREEN:
         display = _fullscreen_display_index()
-        # Prefer that monitor's native size (Info() alone is often the primary/touch bar).
-        size = _desktop_size_for(display, logical_size)
-        return _set_mode_fullscreen(size, display)
+        desktop = _desktop_size_for(display, logical_size)
+        size, use_scaled = resolve_fullscreen_mode(logical_size, desktop)
+        try:
+            return _set_mode_fullscreen(size, display, _fullscreen_flags(use_scaled))
+        except pygame.error:
+            # SCALED can fail on some X11/dual-head setups; keep logical size
+            # rather than opening a 4K software buffer.
+            try:
+                return _set_mode_fullscreen(size, display, pygame.FULLSCREEN)
+            except pygame.error:
+                return _set_mode_fullscreen(desktop, display)
 
     info = pygame.display.Info()
     max_w, max_h = max(320, info.current_w - 80), max(480, info.current_h - 80)

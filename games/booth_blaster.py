@@ -12,9 +12,10 @@ import pygame
 
 from config import BUILD_ID, HEIGHT, IDLE_QUIT_SECONDS, SCALE, SPRITES_DIR, WIDTH
 from core import audio, leaderboard, storage
-from core.audio_ui import AudioPanel, HoldChip, MuteChip
+from core.audio_ui import AudioPanel, MuteChip, PauseChip
 from core.initials_ui import ALPHABET, InitialsPicker
 from core.input import InputState, control_prompt_lines, primary_pad_profile, window_to_logical
+from core.pause_ui import PauseMenu
 from core.platform import is_android, is_web, load_font
 
 
@@ -198,8 +199,6 @@ PILLOW_FLY_Y = 180.0 * SCALE
 PILLOW_SPEED = 160.0 * SCALE
 VICTORY_DURATION = 4.0
 NET_SLOW_DURATION = 1.0
-TITLE_RETURN_HOLD = 0.75
-TITLE_CHIP_HOLD = 0.4
 NET_SPEED_MUL = 0.45
 
 
@@ -350,9 +349,9 @@ class Barrier:
     y: float
     hp: int = 8
     max_hp: int = 8
-    w: int = _sx(120)
-    h: int = _sx(72)
-    # Slot 0 = leftmost; keeps graffiti frames after other barriers despawn.
+    # Source art is ~square; keep hitbox/sprite square so shots can connect.
+    w: int = _sx(140)
+    h: int = _sx(140)
     slot: int = 0
 
     @property
@@ -426,13 +425,18 @@ class BoothBlaster:
         self._initials = ["A", "A", "A"]
         self._initial_idx = 0
         self._letter_cooldown = 0.0
+        # After a picker tap, ignore confirm/fire so touch doesn't double-advance slots.
+        self._initials_block_confirm = 0.0
+        # Stick/D-pad must return to neutral between grid steps (stops post-confirm drift).
+        self._initials_stick_neutral = True
         self._mute_chip = MuteChip((_sx(40), _sx(100)))
         title_x = self._mute_chip.rect.right + _sx(16)
-        self._title_chip = HoldChip(
-            (title_x, _sx(100)), label="TITLE", hold_seconds=TITLE_CHIP_HOLD
-        )
-        self._title_start_hold = 0.0
-        self._pending_title_return = False
+        self._pause_chip = PauseChip((title_x, _sx(100)))
+        self._pause_menu = PauseMenu()
+        self._paused = False
+        self._pause_cooldown = 0.0
+        self._pause_nav_cooldown = 0.0
+        self._pending_pause_action: Optional[str] = None
         self._end_choice = 0  # 0=Play again, 1=Title
         self._end_choice_cooldown = 0.0
         self._pending_end_confirm = False
@@ -523,13 +527,13 @@ class BoothBlaster:
                 key = name.replace(".png", "")
                 self._sprites[key] = _load_sprite(name, maid_size, maid_color)
             self._sprites["barrier"] = _load_sprite(
-                "barrier_crate.png", (_sx(120), _sx(72)), (40, 40, 48)
+                "barrier_crate.png", (_sx(140), _sx(140)), (40, 40, 48)
             )
             self._sprites["barrier_d1"] = _load_sprite(
-                "barrier_crate_d1.png", (_sx(120), _sx(72)), (40, 40, 48)
+                "barrier_crate_d1.png", (_sx(140), _sx(140)), (40, 40, 48)
             )
             self._sprites["barrier_d2"] = _load_sprite(
-                "barrier_crate_d2.png", (_sx(120), _sx(72)), (40, 40, 48)
+                "barrier_crate_d2.png", (_sx(140), _sx(140)), (40, 40, 48)
             )
             self._asset_phase = 3
             return True
@@ -587,24 +591,19 @@ class BoothBlaster:
             pass
 
     def _spawn_barriers(self) -> None:
-        ys = HEIGHT - _sx(420)
+        # Sit just above the lowered player so shields block like classic Invaders.
+        ys = HEIGHT - _sx(PLAYER_SPAWN_BOTTOM + 160)
         xs = [WIDTH * 0.18, WIDTH * 0.38, WIDTH * 0.62, WIDTH * 0.82]
         self.barriers = [Barrier(x=x, y=ys, slot=i) for i, x in enumerate(xs)]
 
     def _barrier_draw_sprite(self, bar: Barrier) -> pygame.Surface:
-        """Leftmost barrier: pristine→d1→d2 graffiti frames; others keep alpha fade."""
-        if bar.slot == 0:
-            ratio = bar.hp / bar.max_hp if bar.max_hp else 0.0
-            if ratio > 2.0 / 3.0:
-                return self._sprites["barrier"]
-            if ratio > 1.0 / 3.0:
-                return self._sprites["barrier_d1"]
-            return self._sprites["barrier_d2"]
-        spr = self._sprites["barrier"].copy()
-        if bar.hp < bar.max_hp:
-            fade = int(255 * (bar.hp / bar.max_hp))
-            spr.set_alpha(max(80, fade))
-        return spr
+        """Graffiti damage frames for every toolbox (clear hit feedback)."""
+        ratio = bar.hp / bar.max_hp if bar.max_hp else 0.0
+        if ratio > 2.0 / 3.0:
+            return self._sprites["barrier"]
+        if ratio > 1.0 / 3.0:
+            return self._sprites["barrier_d1"]
+        return self._sprites["barrier_d2"]
 
     def _kind_for_cell(self, row: int, col: int, wave_index: int) -> EnemyKind:
         """Formation layout: top MAID/MECHA, mid TEEN/ADULT/LINECUTTER/GLOWSTICK(+SELFIE), bottom BOX/ZIPTIE."""
@@ -637,6 +636,38 @@ class BoothBlaster:
         audio.play("ui_confirm")
         audio.stop_music(fade_ms=200)
         return TitleScene()
+
+    def _open_pause(self) -> None:
+        if self.game_over or self._entering_score or self._paused:
+            return
+        self._paused = True
+        self._pause_menu.choice = 0
+        self._pause_cooldown = 0.2
+        self._pause_nav_cooldown = 0.2
+        self._block_fire = True
+        audio.play("ui_confirm")
+        audio.pause_gameplay_music()
+
+    def _close_pause(self) -> None:
+        if not self._paused:
+            return
+        self._paused = False
+        self._pause_cooldown = 0.2
+        self._block_fire = True
+        audio.resume_gameplay_music()
+
+    def _apply_pause_action(self, action: str):
+        if action == PauseMenu.CONTINUE:
+            self._close_pause()
+            return self
+        if action == PauseMenu.TITLE:
+            # Do not resume BGM — _return_to_title() fades/stops it.
+            self._paused = False
+            return self._return_to_title()
+        if action == PauseMenu.QUIT:
+            self.exit_requested = True
+            return None
+        return self
 
     def _spawn_wave(self, wave_index: int) -> None:
         self.enemies.clear()
@@ -768,7 +799,7 @@ class BoothBlaster:
         except Exception:
             _t0 = 0.0
         # #endregion
-        # BGM swap is a no-op on web/Android (see audio.play_music); SFX only here.
+        # Android swaps to boss BGM; web keeps game track (see audio.play_music).
         audio.play_music("boss")
         audio.play("boss_incoming")
         # #region agent log
@@ -825,13 +856,11 @@ class BoothBlaster:
             if event.key == pygame.K_m:
                 audio.toggle_mute()
                 audio.play("ui_blip")
-            elif event.key == pygame.K_t and not self._entering_score:
-                self._pending_title_return = True
-
-        if event.type == pygame.MOUSEBUTTONUP and event.button == 1:
-            self._title_chip.end_hold()
-        elif event.type == pygame.FINGERUP:
-            self._title_chip.end_hold()
+            elif event.key in (pygame.K_t, pygame.K_ESCAPE) and not self._entering_score and not self.game_over:
+                if self._paused and self._pause_cooldown <= 0:
+                    self._close_pause()
+                elif not self._paused:
+                    self._open_pause()
 
         pos: Optional[tuple[int, int]] = None
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
@@ -870,6 +899,9 @@ class BoothBlaster:
             if consumed:
                 self.idle_timer = 0.0
                 self._block_fire = True
+                # Cover confirm_pressed from the same tap (and delayed mouse twin).
+                self._initials_block_confirm = 0.35
+                self._initials_stick_neutral = False
                 return
 
         if self._mute_chip.handle_click(pos):
@@ -877,9 +909,18 @@ class BoothBlaster:
             self._block_fire = True
             return
 
-        if not self.game_over and self._title_chip.begin_hold(pos):
+        if self._paused:
+            action = self._pause_menu.handle_click(pos)
+            if action:
+                self._pending_pause_action = action
+                self.idle_timer = 0.0
+                self._block_fire = True
+            return
+
+        if not self.game_over and self._pause_chip.handle_click(pos):
             self.idle_timer = 0.0
             self._block_fire = True
+            self._open_pause()
 
     def update(self, dt: float, inp: InputState) -> Optional[object]:
         self._ensure_assets()
@@ -936,25 +977,35 @@ class BoothBlaster:
         if self._banner_timer > 0:
             self._banner_timer = max(0.0, self._banner_timer - dt)
 
-        # Title return: chip hold / T / pad Start hold (not during initials).
-        if not self._entering_score and not self.game_over:
-            if self._title_chip.update(dt):
-                self._pending_title_return = True
-            if inp.start_held:
-                self._title_start_hold += dt
-                if self._title_start_hold >= TITLE_RETURN_HOLD:
-                    self._pending_title_return = True
+        if self._pending_pause_action:
+            action = self._pending_pause_action
+            self._pending_pause_action = None
+            nxt = self._apply_pause_action(action)
+            if nxt is not self:
+                return nxt
+
+        if inp.exit_ready:
+            self.exit_requested = True
+            return None
+
+        can_pause = not self._entering_score and not self.game_over
+        if can_pause and (inp.pause_pressed or inp.start_pressed):
+            if self._paused:
+                if self._pause_cooldown <= 0:
+                    self._close_pause()
             else:
-                self._title_start_hold = 0.0
-            if self._pending_title_return:
-                self._pending_title_return = False
-                self._title_chip.end_hold()
-                self._title_start_hold = 0.0
-                return self._return_to_title()
-        else:
-            self._title_chip.end_hold()
-            self._title_start_hold = 0.0
-            self._pending_title_return = False
+                self._open_pause()
+
+        if self._paused:
+            self._pause_cooldown = max(0.0, self._pause_cooldown - dt)
+            self._pause_nav_cooldown = max(0.0, self._pause_nav_cooldown - dt)
+            if self._pause_cooldown <= 0:
+                if abs(inp.move_y) > 0.4 and self._pause_nav_cooldown <= 0:
+                    self._pause_menu.move(1 if inp.move_y > 0 else -1)
+                    self._pause_nav_cooldown = 0.2
+                if inp.confirm_pressed:
+                    return self._apply_pause_action(self._pause_menu.confirm())
+            return self
 
         freeze_idle = self._entering_score or self.victory_timer > 0
         if inp.any_activity:
@@ -964,10 +1015,6 @@ class BoothBlaster:
             if self.idle_timer >= IDLE_QUIT_SECONDS:
                 self.exit_requested = True
                 return None
-
-        if inp.exit_ready:
-            self.exit_requested = True
-            return None
 
         if self.victory_timer > 0:
             self.victory_timer -= dt
@@ -985,6 +1032,9 @@ class BoothBlaster:
         if self.game_over:
             if self._block_fire:
                 self._block_fire = False
+                # Still tick the post-tap confirm shield while swallowing this frame.
+                if self._entering_score:
+                    self._initials_block_confirm = max(0.0, self._initials_block_confirm - dt)
                 return self
             if self._entering_score:
                 self._update_initials_entry(dt, inp)
@@ -1107,8 +1157,9 @@ class BoothBlaster:
             if not (e.is_flyer and (e.rect.right < -edge or e.rect.left > WIDTH + edge))
         ]
 
-        # Bolts
+        # Bolts (track prev_y for swept barrier hits — fast bolts can tunnel a short shield)
         for b in self.bolts:
+            b._prev_y = b.y  # type: ignore[attr-defined]
             b.y += b.vy * dt
         self.bolts = [b for b in self.bolts if -40 < b.y < HEIGHT + 40]
 
@@ -1232,6 +1283,23 @@ class BoothBlaster:
         ):
             e.drop_pending = True
 
+    @staticmethod
+    def _bolt_hits_rect(b: Bolt, rect: pygame.Rect) -> bool:
+        """AABB hit, or swept vertical segment if the bolt jumped past this frame."""
+        if b.rect.colliderect(rect):
+            return True
+        prev_y = getattr(b, "_prev_y", b.y)
+        if prev_y == b.y:
+            return False
+        half_w = b.w / 2
+        if b.x + half_w < rect.left or b.x - half_w > rect.right:
+            return False
+        y0 = min(prev_y, b.y)
+        y1 = max(prev_y, b.y)
+        bolt_top = y0 - b.h / 2
+        bolt_bot = y1 + b.h / 2
+        return bolt_bot >= rect.top and bolt_top <= rect.bottom
+
     def _resolve_collisions(self) -> None:
         remaining_bolts: list[Bolt] = []
         dead_enemies: list[Enemy] = []
@@ -1241,7 +1309,7 @@ class BoothBlaster:
                 for e in self.enemies:
                     if e in dead_enemies:
                         continue
-                    if b.rect.colliderect(e.rect):
+                    if self._bolt_hits_rect(b, e.rect):
                         hit = True
                         # MECHA armor chip: first hit while armored strips armor only
                         if e.armored:
@@ -1258,18 +1326,18 @@ class BoothBlaster:
                         break
                 if not hit:
                     for bar in self.barriers:
-                        if bar.hp > 0 and b.rect.colliderect(bar.rect):
+                        if bar.hp > 0 and self._bolt_hits_rect(b, bar.rect):
                             bar.hp -= 1
                             hit = True
                             audio.play("barrier_hit")
                             break
             else:
-                if self.player.invuln <= 0 and b.rect.colliderect(self.player.rect):
+                if self.player.invuln <= 0 and self._bolt_hits_rect(b, self.player.rect):
                     self._player_hit(bolt_kind=b.kind)
                     hit = True
                 if not hit:
                     for bar in self.barriers:
-                        if bar.hp > 0 and b.rect.colliderect(bar.rect):
+                        if bar.hp > 0 and self._bolt_hits_rect(b, bar.rect):
                             bar.hp -= 1
                             hit = True
                             audio.play("barrier_hit")
@@ -1305,6 +1373,8 @@ class BoothBlaster:
         self._initials = ["A", "A", "A"]
         self._initial_idx = 0
         self._letter_cooldown = 0.0
+        self._initials_block_confirm = 0.0
+        self._initials_stick_neutral = True
         # Practice / sightseeing skins never post to the board.
         self._entering_score = (not is_practice_skin()) and leaderboard.qualifies(self.score)
         self._initials_picker = (
@@ -1346,41 +1416,55 @@ class BoothBlaster:
         cols = InitialsPicker.COLS
         rows = InitialsPicker.ROWS
         self._letter_cooldown = max(0.0, self._letter_cooldown - dt)
-        if self._letter_cooldown <= 0:
-            mx, my = inp.move_x, inp.move_y
-            if abs(mx) > 0.4 or abs(my) > 0.4:
-                cur = ALPHABET.index(self._initials[self._initial_idx])
-                row, col = divmod(cur, cols)
-                moved = False
-                # Prefer the dominant axis so diagonal stick input does not zigzag.
-                if abs(mx) >= abs(my) and abs(mx) > 0.4:
-                    new_col = col + (1 if mx > 0 else -1)
-                    if new_col < 0:
-                        if self._initial_idx > 0:
-                            self._initial_idx -= 1
-                            moved = True
-                    elif new_col >= cols:
-                        if self._initial_idx < 2:
-                            self._initial_idx += 1
-                            moved = True
-                    else:
-                        self._initials[self._initial_idx] = ALPHABET[row * cols + new_col]
+        self._initials_block_confirm = max(0.0, self._initials_block_confirm - dt)
+
+        mx, my = inp.move_x, inp.move_y
+        dead = 0.4
+        if abs(mx) <= dead and abs(my) <= dead:
+            self._initials_stick_neutral = True
+        elif (
+            self._initials_stick_neutral
+            and self._letter_cooldown <= 0
+            and (abs(mx) > dead or abs(my) > dead)
+        ):
+            cur = ALPHABET.index(self._initials[self._initial_idx])
+            row, col = divmod(cur, cols)
+            moved = False
+            # Prefer the dominant axis so diagonal stick input does not zigzag.
+            if abs(mx) >= abs(my) and abs(mx) > dead:
+                new_col = col + (1 if mx > 0 else -1)
+                if new_col < 0:
+                    if self._initial_idx > 0:
+                        self._initial_idx -= 1
                         moved = True
-                elif abs(my) > 0.4:
-                    new_row = row + (1 if my > 0 else -1)
-                    if 0 <= new_row < rows:
-                        self._initials[self._initial_idx] = ALPHABET[new_row * cols + col]
+                elif new_col >= cols:
+                    if self._initial_idx < 2:
+                        self._initial_idx += 1
                         moved = True
-                if moved:
-                    self._letter_cooldown = 0.18
-                    audio.play("ui_blip")
-        # Controller/keyboard confirm still works; touch uses DONE on the picker.
-        if inp.fire_pressed or inp.confirm_pressed:
+                else:
+                    self._initials[self._initial_idx] = ALPHABET[row * cols + new_col]
+                    moved = True
+            elif abs(my) > dead:
+                new_row = row + (1 if my > 0 else -1)
+                if 0 <= new_row < rows:
+                    self._initials[self._initial_idx] = ALPHABET[new_row * cols + col]
+                    moved = True
+            if moved:
+                # One step per deflection; must release to neutral before the next.
+                self._initials_stick_neutral = False
+                self._letter_cooldown = 0.12
+                audio.play("ui_blip")
+
+        # Controller/keyboard confirm; touch letter taps already advanced the slot.
+        if (inp.fire_pressed or inp.confirm_pressed) and self._initials_block_confirm <= 0:
             if self._initial_idx < 2:
                 self._initial_idx += 1
                 audio.play("ui_confirm")
             else:
                 self._submit_initials()
+            # Require stick release so residual down doesn't walk the next letter.
+            self._initials_stick_neutral = False
+            self._initials_block_confirm = 0.12
 
     def _restart(self) -> None:
         self.score = 0
@@ -1401,9 +1485,9 @@ class BoothBlaster:
         self._score_saved = False
         self._initials_picker = None
         self._block_fire = False
-        self._title_chip.end_hold()
-        self._title_start_hold = 0.0
-        self._pending_title_return = False
+        self._paused = False
+        self._pending_pause_action = None
+        self._pause_cooldown = 0.0
         self._end_choice = 0
         self._spawn_barriers()
         self._spawn_wave(1)
@@ -1497,7 +1581,7 @@ class BoothBlaster:
         surface.blit(self._hud_surf, (_sx(40), _sx(40)))
         self._mute_chip.draw(surface)
         if not self.game_over:
-            self._title_chip.draw(surface)
+            self._pause_chip.draw(surface)
         if self.wave.boss_active:
             label = BOSS_HUD_LABELS.get(self.wave.index, "BOSS!")
             if getattr(self, "_boss_hud_key", None) != label:
@@ -1567,6 +1651,9 @@ class BoothBlaster:
                 tip = self._font.render("Left/Right choose · Start confirm", True, HUD_COLOR)
                 surface.blit(tip, tip.get_rect(center=(WIDTH // 2, HEIGHT // 2 + _sx(20))))
                 self._draw_leaderboard(surface, HEIGHT // 2 + _sx(80))
+
+        if self._paused:
+            self._pause_menu.draw(surface)
 
     def _draw_boss_callout(self, surface: pygame.Surface) -> None:
         """Large cheesy title card before each boss fight."""
@@ -1845,6 +1932,7 @@ class TitleScene:
         self.next_scene: Optional[BoothBlaster] = None
         self._audio_panel = AudioPanel((WIDTH - _sx(36), _sx(36)), scale=1.15)
         self._block_confirm = True
+        self._start_requested = False
         # Phoenix title secret (one-shot per visit).
         self._phoenix: Optional[pygame.Surface] = None
         self._phoenix_buf: list[str] = []
@@ -1962,6 +2050,13 @@ class TitleScene:
         self.idle_timer = 0.0
         self._block_confirm = True
 
+    def _start_btn_rect(self) -> pygame.Rect:
+        """Primary Start CTA on the title screen (touch/mouse)."""
+        w, h = _sx(360), _sx(96)
+        rect = pygame.Rect(0, 0, w, h)
+        rect.center = (WIDTH // 2, HEIGHT // 2 - _sx(250))
+        return rect
+
     def _skin_hit_rects(self) -> tuple[pygame.Rect, pygame.Rect, pygame.Rect]:
         """Left arrow, preview, right arrow — title skin cycle touch targets."""
         cy = HEIGHT // 2 + _sx(480)
@@ -2015,35 +2110,39 @@ class TitleScene:
         audio.play("phoenix_screech")
 
     def _handle_pointer_konami(self, lx: float, ly: float) -> None:
-        """Touch/mouse zones: upper third = up; lower third = fire."""
+        """Touch/mouse zones: START button, skin arrows, konami thirds."""
         if self._audio_panel.handle_click((int(lx), int(ly))):
             self.idle_timer = 0.0
             self._block_confirm = True
             return
         self._ensure()
-        left, _preview, right = self._skin_hit_rects()
         pt = (int(lx), int(ly))
+        # START is the only touch/mouse path into a run (not tap-anywhere).
+        if self._start_btn_rect().collidepoint(pt):
+            self.idle_timer = 0.0
+            self._block_confirm = True
+            if not self._phoenix_active:
+                self._start_requested = True
+            return
+        left, _preview, right = self._skin_hit_rects()
         if left.collidepoint(pt):
             self._cycle_skin(-1)
+            self._block_confirm = True
             return
         if right.collidepoint(pt):
             self._cycle_skin(1)
+            self._block_confirm = True
             return
         self.idle_timer = 0.0
+        # Pointer taps outside START never begin a run.
+        self._block_confirm = True
         if self._phoenix_active:
-            # Ignore start confirm while burn sequence plays.
-            self._block_confirm = True
             return
         self._touch_konami = True
         if ly < HEIGHT / 3:
             self._phoenix_push("up")
-            # Up taps must never start the game.
-            self._block_confirm = True
         elif ly > 2 * HEIGHT / 3:
-            if self._phoenix_push("fire"):
-                self._block_confirm = True
-            # else: allow confirm_pressed to start normally
-        # Middle third: normal confirm / start via InputState
+            self._phoenix_push("fire")
 
     def handle_event(self, event: pygame.event.Event) -> None:
         if event.type == pygame.KEYDOWN:
@@ -2201,6 +2300,12 @@ class TitleScene:
             self._cycle_skin(skin_dir)
         self._prev_skin_dir = skin_dir
 
+        # Touch START wins; consume same-frame confirm_pressed from the tap.
+        if self._start_requested:
+            self._start_requested = False
+            self._block_confirm = False
+            return self._begin_run()
+
         if self._block_confirm:
             self._block_confirm = False
             return self
@@ -2219,44 +2324,46 @@ class TitleScene:
         if inp.exit_ready:
             self.exit_requested = True
             return None
+        # Keyboard / pad Start only (touch must use the START button).
         if inp.confirm_pressed:
-            audio.play("ui_confirm")
-            # #region agent log
-            try:
-                from core.debug_agent import agent_log
-                import time as _t
-
-                _t0 = _t.perf_counter()
-                agent_log("H8", "TitleScene.update", "creating BoothBlaster", {})
-                _game = BoothBlaster()
-                agent_log(
-                    "H8",
-                    "TitleScene.update",
-                    "BoothBlaster created",
-                    {"ms": round((_t.perf_counter() - _t0) * 1000, 1)},
-                )
-                return _game
-            except Exception as _exc:
-                try:
-                    from core.debug_agent import agent_log
-
-                    agent_log("H8", "TitleScene.update", "BoothBlaster failed", {"err": repr(_exc)})
-                except Exception:
-                    pass
-                raise
-            # #endregion
+            return self._begin_run()
         return self
 
+    def _begin_run(self) -> BoothBlaster:
+        audio.play("ui_confirm")
+        # #region agent log
+        try:
+            from core.debug_agent import agent_log
+            import time as _t
+
+            _t0 = _t.perf_counter()
+            agent_log("H8", "TitleScene.update", "creating BoothBlaster", {})
+            _game = BoothBlaster()
+            agent_log(
+                "H8",
+                "TitleScene.update",
+                "BoothBlaster created",
+                {"ms": round((_t.perf_counter() - _t0) * 1000, 1)},
+            )
+            return _game
+        except Exception as _exc:
+            try:
+                from core.debug_agent import agent_log
+
+                agent_log("H8", "TitleScene.update", "BoothBlaster failed", {"err": repr(_exc)})
+            except Exception:
+                pass
+            raise
+        # #endregion
+
     def _start_prompt_line(self) -> str:
-        """Primary start hint: browser vs app vs pad/desktop."""
-        if is_web():
-            return "Click or tap to start"
-        if is_android():
-            return "Tap to start"
+        """Secondary start hint under the START button."""
+        if is_web() or is_android():
+            return ""
         if primary_pad_profile() is not None:
             tip_text, _, _ = control_prompt_lines("Start")
             return tip_text
-        return "Click or press Space to start"
+        return "or press Space / Enter"
 
     def _rebuild_title_static(self) -> None:
         """Cache gradient + fonts into one opaque surface (H7: 25-75ms/frame before)."""
@@ -2267,23 +2374,31 @@ class TitleScene:
         sub = self._font.render("Laser Monkey vs the Con Crowd", True, HUD_COLOR)
         _, tip2_text, tip3_text = control_prompt_lines("Start")
         tip_text = self._start_prompt_line()
-        tip = self._font.render(tip_text, True, OK)
         tip2 = self._font.render(tip2_text, True, HUD_COLOR)
         tip3 = self._font.render(tip3_text, True, HUD_COLOR)
         tip4 = self._font.render("M mute - [ ] music - , . sfx", True, HUD_COLOR)
         tip5 = self._font_sm.render("Left/Right - cycle Dobby skin", True, HUD_COLOR)
         layer.blit(title, title.get_rect(center=(WIDTH // 2, HEIGHT // 2 - _sx(420))))
         layer.blit(sub, sub.get_rect(center=(WIDTH // 2, HEIGHT // 2 - _sx(340))))
-        layer.blit(tip, tip.get_rect(center=(WIDTH // 2, HEIGHT // 2 - _sx(260))))
-        layer.blit(tip2, tip2.get_rect(center=(WIDTH // 2, HEIGHT // 2 - _sx(210))))
-        layer.blit(tip3, tip3.get_rect(center=(WIDTH // 2, HEIGHT // 2 - _sx(160))))
-        layer.blit(tip4, tip4.get_rect(center=(WIDTH // 2, HEIGHT // 2 - _sx(110))))
-        layer.blit(tip5, tip5.get_rect(center=(WIDTH // 2, HEIGHT // 2 - _sx(60))))
+        start_r = self._start_btn_rect()
+        pygame.draw.rect(layer, ACCENT, start_r, border_radius=_sx(16))
+        pygame.draw.rect(layer, OK, start_r, width=3, border_radius=_sx(16))
+        start_lbl = self._font_lg.render("START", True, HUD_COLOR)
+        layer.blit(start_lbl, start_lbl.get_rect(center=start_r.center))
+        tip_y = start_r.bottom + _sx(28)
+        if tip_text:
+            tip = self._font.render(tip_text, True, OK)
+            layer.blit(tip, tip.get_rect(center=(WIDTH // 2, tip_y)))
+            tip_y += _sx(50)
+        layer.blit(tip2, tip2.get_rect(center=(WIDTH // 2, tip_y)))
+        layer.blit(tip3, tip3.get_rect(center=(WIDTH // 2, tip_y + _sx(50))))
+        layer.blit(tip4, tip4.get_rect(center=(WIDTH // 2, tip_y + _sx(100))))
+        layer.blit(tip5, tip5.get_rect(center=(WIDTH // 2, tip_y + _sx(150))))
 
         dummy = BoothBlaster.__new__(BoothBlaster)
         dummy._font = self._font
         dummy._font_lg = self._font_lg
-        BoothBlaster._draw_leaderboard(dummy, layer, HEIGHT // 2 - _sx(20))
+        BoothBlaster._draw_leaderboard(dummy, layer, tip_y + _sx(200))
 
         left, preview, right = self._skin_hit_rects()
         if self._skin_preview is not None:

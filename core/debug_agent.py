@@ -1,8 +1,12 @@
-"""Session debug logger for freeze investigation (desktop file + web console)."""
+"""Optional session debug logger (desktop/web investigation only).
+
+Disabled unless ``DOBBY_AGENT_LOG=1``. Never enable for phone/Play builds.
+"""
 
 from __future__ import annotations
 
 import json
+import os
 import time
 from pathlib import Path
 from typing import Any, Optional
@@ -11,8 +15,11 @@ _SESSION = "c09524"
 _LOG = Path(__file__).resolve().parents[1] / "debug-c09524.log"
 _INGEST = "http://127.0.0.1:7319/ingest/a26fd018-190b-4e9e-8c78-2c75b0f5e30e"
 _COUNT = 0
-# Rate-limit noisy per-frame logs (hypothesis H5/H9).
 _LAST_KEY_MS: dict[str, int] = {}
+
+
+def _enabled() -> bool:
+    return os.environ.get("DOBBY_AGENT_LOG", "").strip() in {"1", "true", "TRUE", "yes", "YES"}
 
 
 def agent_log(
@@ -23,7 +30,8 @@ def agent_log(
     run_id: str = "post-fix",
     min_interval_ms: int = 0,
 ) -> None:
-    # #region agent log
+    if not _enabled():
+        return
     global _COUNT
     now = int(time.time() * 1000)
     if min_interval_ms > 0:
@@ -54,7 +62,6 @@ def agent_log(
         print(text, flush=True)
     except Exception:
         pass
-    # Web: console + fire-and-forget ingest (local PC browser debug sessions).
     try:
         from core.platform import is_web
 
@@ -62,7 +69,6 @@ def agent_log(
             import platform as _plat
 
             _plat.window.console.log(text)
-            # Do not await the promise — awaiting unreachable hosts freezes WASM.
             _plat.window.fetch(
                 _INGEST,
                 {
@@ -79,7 +85,6 @@ def agent_log(
             return
     except Exception:
         pass
-    # Desktop native: short-timeout ingest.
     try:
         import urllib.request
 
@@ -95,4 +100,3 @@ def agent_log(
         urllib.request.urlopen(req, timeout=0.05).read()
     except Exception:
         pass
-    # #endregion

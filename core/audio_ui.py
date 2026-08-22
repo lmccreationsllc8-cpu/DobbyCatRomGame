@@ -221,6 +221,36 @@ class MuteChip:
         surface.blit(self._cache, self.rect.topleft)
 
 
+class PauseChip:
+    """Tiny in-game pause toggle."""
+
+    def __init__(self, topleft: tuple[int, int]) -> None:
+        self._font = load_font(28)
+        w, h = max(1, int(110 * SCALE)), max(1, int(48 * SCALE))
+        self.rect = pygame.Rect(topleft[0], topleft[1], w, h)
+        self._last_click_ts = 0.0
+        self._cache: Optional[pygame.Surface] = None
+
+    def handle_click(self, pos: tuple[int, int]) -> bool:
+        if not self.rect.collidepoint(pos):
+            return False
+        now = time.time()
+        if now - self._last_click_ts < 0.12:
+            return True
+        self._last_click_ts = now
+        return True
+
+    def draw(self, surface: pygame.Surface) -> None:
+        if self._cache is None:
+            chip = pygame.Surface(self.rect.size, pygame.SRCALPHA)
+            chip.fill((20, 24, 40, 180))
+            pygame.draw.rect(chip, OK, chip.get_rect(), width=2, border_radius=10)
+            text = self._font.render("PAUSE", True, OK)
+            chip.blit(text, text.get_rect(center=chip.get_rect().center))
+            self._cache = chip
+        surface.blit(self._cache, self.rect.topleft)
+
+
 class HoldChip:
     """HUD chip that fires only after being held for ``hold_seconds`` (anti-mis-tap)."""
 

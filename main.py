@@ -53,7 +53,24 @@ async def main() -> None:
     # #endregion
 
     screen = create_display((config.WIDTH, config.HEIGHT))
-    canvas = pygame.Surface((config.WIDTH, config.HEIGHT))
+    canvas = pygame.Surface((config.WIDTH, config.HEIGHT)).convert()
+    # #region agent log
+    try:
+        from core.debug_agent import agent_log
+
+        agent_log(
+            "H16",
+            "main",
+            "display",
+            {
+                "screen": list(screen.get_size()),
+                "canvas": list(canvas.get_size()),
+                "scale_blit": screen.get_size() != canvas.get_size(),
+            },
+        )
+    except Exception:
+        pass
+    # #endregion
 
     clock = pygame.time.Clock()
     inputs = InputManager()
@@ -223,11 +240,8 @@ async def main() -> None:
             pass
         # #endregion
         if screen.get_size() != canvas.get_size():
-            # Prefer nearest on web — smoothscale every frame is expensive.
-            if is_web():
-                pygame.transform.scale(canvas, screen.get_size(), screen)
-            else:
-                pygame.transform.smoothscale(canvas, screen.get_size(), screen)
+            # Prefer nearest — smoothscale every frame is expensive (esp. Android).
+            pygame.transform.scale(canvas, screen.get_size(), screen)
         else:
             screen.blit(canvas, (0, 0))
         pygame.display.flip()
@@ -236,7 +250,9 @@ async def main() -> None:
             running = False
 
         # Required for pygbag / browser: yield to the event loop each frame.
-        await asyncio.sleep(0)
+        # On Pi/desktop this hop adds lag for no benefit.
+        if is_web():
+            await asyncio.sleep(0)
 
     if not is_web():
         audio.shutdown()

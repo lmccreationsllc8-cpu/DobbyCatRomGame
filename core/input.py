@@ -106,8 +106,10 @@ class InputState:
     confirm_pressed: bool = False
     exit_held: bool = False
     exit_ready: bool = False
-    # Pad Start/Options held (excludes buttons that are also Select — for title-return hold).
+    # Pad Start/Options held (excludes buttons that are also Select).
     start_held: bool = False
+    start_pressed: bool = False
+    pause_pressed: bool = False
     any_activity: bool = False
     # Absolute finger/mouse X in logical canvas coords while a play touch is held.
     aim_x: Optional[float] = None
@@ -132,6 +134,9 @@ class InputManager:
         self._refresh_joysticks()
         self._prev_fire = False
         self._prev_confirm = False
+        self._prev_start = False
+        self._prev_pause_key = False
+        self._prev_android_back = False
         self._exit_hold = 0.0
         # Touch / pointer state (Android often surfaces touches as mouse).
         self._pointers: dict[int, tuple[float, float]] = {}  # id -> logical (x, y)
@@ -331,6 +336,15 @@ class InputManager:
         else:
             self._exit_hold = 0.0
 
+        pause_key = bool(keys[pygame.K_p])
+        start_pressed = start_held and not self._prev_start
+        pause_pressed = (pause_key and not self._prev_pause_key) or (
+            self._android_back and not self._prev_android_back
+        )
+        self._prev_start = start_held
+        self._prev_pause_key = pause_key
+        self._prev_android_back = self._android_back
+
         return InputState(
             move_x=move_x,
             move_y=move_y,
@@ -340,6 +354,8 @@ class InputManager:
             exit_held=exit_held,
             exit_ready=self._exit_hold >= EXIT_COMBO_HOLD_SECONDS,
             start_held=start_held,
+            start_pressed=start_pressed,
+            pause_pressed=pause_pressed,
             any_activity=activity,
             aim_x=aim_x,
         )

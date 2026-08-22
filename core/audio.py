@@ -46,11 +46,11 @@ MUSIC_FILES = {
 
 
 def _resolve_audio_file(filename: str) -> Optional[Path]:
-    """Prefer OGG on web (Safari/WASM); fall back to the configured name."""
+    """Prefer OGG on soft platforms (smaller / faster music.load); else configured name."""
     audio_dir: Path = config.AUDIO_DIR
     stem = Path(filename).stem
     candidates: list[Path]
-    if is_web():
+    if is_web() or is_android():
         candidates = [audio_dir / f"{stem}.ogg", audio_dir / filename]
     else:
         candidates = [audio_dir / filename, audio_dir / f"{stem}.ogg"]
@@ -325,10 +325,9 @@ def play_music(name: str, loop: bool = True) -> None:
     if _music_current == name and _pending_music is None and pygame.mixer.music.get_busy():
         _apply_volumes()
         return
-    # Web/Android: never swap BGM after the first track. music.load() of the
-    # next OGG on the main/audio thread freezes at first-boss handoff.
-    soft = is_web() or is_android()
-    if soft and _music_current is not None and _music_current != name:
+    # Web/Safari: never swap BGM after the first track — music.load() freezes.
+    # Android pygame-ce can swap (prefers OGG).
+    if is_web() and _music_current is not None and _music_current != name:
         # #region agent log
         try:
             from core.debug_agent import agent_log
@@ -337,14 +336,13 @@ def play_music(name: str, loop: bool = True) -> None:
                 "H11",
                 "audio.play_music",
                 "skip BGM swap",
-                {"from": _music_current, "to": name, "web": is_web(), "android": is_android()},
+                {"from": _music_current, "to": name, "web": True, "android": is_android()},
             )
         except Exception:
             pass
         # #endregion
         _pending_music = None
         _music_fade_remaining = 0.0
-        # Soft platforms: telegraph boss handoff without music.load freeze.
         if name == "boss":
             play("wave_clear", volume=0.85)
         return
@@ -354,12 +352,11 @@ def play_music(name: str, loop: bool = True) -> None:
 
 
 def tick(dt: float) -> None:
-    """Advance deferred music swaps after a mobile/web fade-out."""
+    """Advance deferred music swaps after a desktop fade-out."""
     global _pending_music, _music_fade_remaining
     if _pending_music is None:
         return
-    # Drop any deferred swap on web/Android — same freeze as play_music.
-    if is_web() or is_android():
+    if is_web():
         # #region agent log
         try:
             from core.debug_agent import agent_log
@@ -404,6 +401,26 @@ def stop_music(fade_ms: int = 400) -> None:
     except pygame.error:
         pass
     _music_current = None
+
+
+def pause_gameplay_music() -> None:
+    """Pause BGM for the in-run pause menu. Does not change mute state."""
+    if not _initialized or _settings.muted:
+        return
+    try:
+        pygame.mixer.music.pause()
+    except pygame.error:
+        pass
+
+
+def resume_gameplay_music() -> None:
+    """Resume BGM after Continue. Does not unmute."""
+    if not _initialized or _settings.muted:
+        return
+    try:
+        pygame.mixer.music.unpause()
+    except pygame.error:
+        pass
 
 
 def shutdown() -> None:

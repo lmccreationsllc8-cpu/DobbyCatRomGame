@@ -39,6 +39,8 @@ class InitialsPicker:
         self.done_rect = pygame.Rect(0, 0, 1, 1)
         self.panel_rect = pygame.Rect(0, 0, 1, 1)
         self._last_click_ts = 0.0
+        # Android often delivers FINGERDOWN + mouse for one tap; ignore the twin.
+        self._click_debounce_s = 0.28
         self._layout()
 
     def _layout(self) -> None:
@@ -95,7 +97,8 @@ class InitialsPicker:
         Mutates initials in place when a letter is chosen.
         """
         now = time.time()
-        if now - self._last_click_ts < 0.12:
+        if now - self._last_click_ts < self._click_debounce_s:
+            # Swallow duplicate finger/mouse delivery without advancing again.
             return True, initial_idx
 
         for i, rect in enumerate(self.slot_rects):

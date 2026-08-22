@@ -24,10 +24,10 @@ source.exclude_dirs = tests,bin,venv,.venv,.buildozer,.git,.github,.cursor,tools
 
 # (list) Investigation helpers, build recipes, and generated/reference artifacts to exclude
 # Local recipes remain available to p4a from the source tree but must not enter private.tar.
-source.exclude_patterns = assets/reference/*,assets/reference/**/*,p4a-recipes/*,p4a-recipes/**/*,_*,debug-*.log,_apk_*,_apk_*/*
+source.exclude_patterns = assets/reference/*,assets/reference/**/*,p4a-recipes/*,p4a-recipes/**/*,_*,debug-*.log,debug-*.png,debug-*.jpg,_apk_*,_apk_*/*
 
 # (str) Application versioning (method 1)
-version = 0.1.11
+version = 0.1.18
 
 # (list) Application requirements — no numpy/Pillow in the APK
 requirements = hostpython3==3.11.11,python3==3.11.11,pygame-ce
@@ -73,6 +73,9 @@ p4a.local_recipes = ./p4a-recipes
 
 # (str) Bootstrap to use for android builds
 p4a.bootstrap = sdl2
+
+android.accept_sdk_license = True
+android.build_tools_version = 35.0.0
 
 # (bool) If True, skip stripping debug symbols
 #android.skip_strip = False
