@@ -9,7 +9,7 @@ import pygame
 
 from core import audio
 from core.audio_ui import PauseChip
-from core.input import InputState
+from core.input import HUD_STEER_MIN_Y, InputState, pointer_steers_aim
 from core.pause_ui import PauseMenu
 from games.booth_blaster import BoothBlaster, TitleScene
 
@@ -72,6 +72,12 @@ class InputPauseEdgeTests(unittest.TestCase):
         self.assertFalse(inp.start_pressed)
         self.assertFalse(inp.pause_pressed)
 
+    def test_hud_band_does_not_steer(self) -> None:
+        self.assertFalse(pointer_steers_aim(100))
+        self.assertFalse(pointer_steers_aim(HUD_STEER_MIN_Y - 1))
+        self.assertTrue(pointer_steers_aim(HUD_STEER_MIN_Y))
+        self.assertTrue(pointer_steers_aim(400))
+
 
 class PauseChipTests(unittest.TestCase):
     @classmethod
@@ -82,6 +88,11 @@ class PauseChipTests(unittest.TestCase):
         chip = PauseChip((40, 100))
         self.assertTrue(chip.handle_click(chip.rect.center))
         self.assertFalse(chip.handle_click((0, 0)))
+
+    def test_padded_hit_catches_near_miss(self) -> None:
+        chip = PauseChip((40, 100))
+        near = (chip.rect.right + 8, chip.rect.centery)
+        self.assertTrue(chip.handle_click(near))
 
 
 class BoothBlasterPauseTests(unittest.TestCase):
@@ -125,3 +136,46 @@ class BoothBlasterPauseTests(unittest.TestCase):
         nxt = game.update(0.05, InputState(exit_ready=True))
         self.assertIsNone(nxt)
         self.assertTrue(game.exit_requested)
+
+    def test_title_button_accepts_touch_mouse_press(self) -> None:
+        game = BoothBlaster()
+        game._assets_ready = True
+        game._open_pause()
+        pos = game._pause_menu.button_rects[1].center
+        event = pygame.event.Event(
+            pygame.MOUSEBUTTONDOWN, {"button": 1, "pos": pos, "touch": True}
+        )
+        game.handle_event(event)
+        nxt = game.update(0.05, InputState())
+        self.assertIsInstance(nxt, TitleScene)
+
+    def test_held_move_y_does_not_scroll_pause_buttons(self) -> None:
+        game = BoothBlaster()
+        game._assets_ready = True
+        game._open_pause()
+        # Residual/virtual axis after the opening tap must not walk the list.
+        game.update(0.25, InputState(move_y=1.0))
+        self.assertEqual(game._pause_menu.choice, 0)
+        game.update(0.25, InputState(move_y=1.0))
+        self.assertEqual(game._pause_menu.choice, 0)
+
+    def test_pause_nav_steps_once_per_stick_press(self) -> None:
+        game = BoothBlaster()
+        game._assets_ready = True
+        game._open_pause()
+        game.update(0.25, InputState(move_y=0.0))
+        game.update(0.05, InputState(move_y=1.0))
+        self.assertEqual(game._pause_menu.choice, 1)
+        game.update(0.25, InputState(move_y=1.0))
+        self.assertEqual(game._pause_menu.choice, 1)
+        game.update(0.05, InputState(move_y=0.0))
+        game.update(0.05, InputState(move_y=1.0))
+        self.assertEqual(game._pause_menu.choice, 2)
+
+    def test_t_key_press_returns_to_title(self) -> None:
+        game = BoothBlaster()
+        game._assets_ready = True
+        game.handle_event(pygame.event.Event(pygame.KEYDOWN, {"key": pygame.K_t}))
+        nxt = game.update(0.05, InputState())
+        self.assertIsInstance(nxt, TitleScene)
+        self.assertFalse(game.exit_requested)

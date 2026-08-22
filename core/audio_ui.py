@@ -222,17 +222,19 @@ class MuteChip:
 
 
 class PauseChip:
-    """Tiny in-game pause toggle."""
+    """Fat-finger pause control for phone / kiosk touch."""
 
     def __init__(self, topleft: tuple[int, int]) -> None:
-        self._font = load_font(28)
-        w, h = max(1, int(110 * SCALE)), max(1, int(48 * SCALE))
+        self._font = load_font(36)
+        w, h = max(1, int(200 * SCALE)), max(1, int(88 * SCALE))
+        pad = max(1, int(24 * SCALE))
         self.rect = pygame.Rect(topleft[0], topleft[1], w, h)
+        self.hit_rect = self.rect.inflate(pad, pad)
         self._last_click_ts = 0.0
         self._cache: Optional[pygame.Surface] = None
 
     def handle_click(self, pos: tuple[int, int]) -> bool:
-        if not self.rect.collidepoint(pos):
+        if not self.hit_rect.collidepoint(pos):
             return False
         now = time.time()
         if now - self._last_click_ts < 0.12:

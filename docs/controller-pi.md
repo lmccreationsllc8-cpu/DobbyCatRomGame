@@ -35,8 +35,8 @@ Booth pad on LaserMonkeyKiosk2 is a **DragonRise** USB dongle (`lsusb`: `0079:01
 | Move | D-pad → axes **0** / **1** | Hat may also report; code reads both |
 | Fire / confirm | Face buttons **0–3** (X/A/B/Y) | All face buttons fire for booth use |
 | Select / Start | **8** / **9** | Separate: quit vs confirm / pause |
-| Pause | Tap **PAUSE** chip, Start, P, T, or Esc | Does not exit the process |
-| Return to title | Pause menu → Return to title | Does not exit the process |
+| Pause | Tap **PAUSE** (top-right) or **Start** | Press, not hold. Does not exit the process |
+| Return to title | Tap **Return to title** on the pause menu | Press, not hold. Does not exit the process |
 | Quit app | Hold **Select** (~1.25s) or pause menu **Quit** | Esc / Share / Back hold; same as DualShock |
 
 Pinned on the Pi in `/etc/rcars/rcars.env` (inherited by the game via control):

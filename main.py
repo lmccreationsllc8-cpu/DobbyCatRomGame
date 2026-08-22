@@ -94,6 +94,9 @@ async def main() -> None:
             inputs.handle_device_event(event)
             if hasattr(scene, "handle_event"):
                 scene.handle_event(event)  # type: ignore[union-attr]
+            if getattr(scene, "ui_consumed_touch", False):
+                inputs.discard_pointers()
+                scene.ui_consumed_touch = False
 
         if not running:
             break

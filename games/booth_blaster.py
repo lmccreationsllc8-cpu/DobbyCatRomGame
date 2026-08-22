@@ -430,12 +430,16 @@ class BoothBlaster:
         # Stick/D-pad must return to neutral between grid steps (stops post-confirm drift).
         self._initials_stick_neutral = True
         self._mute_chip = MuteChip((_sx(40), _sx(100)))
-        title_x = self._mute_chip.rect.right + _sx(16)
-        self._pause_chip = PauseChip((title_x, _sx(100)))
+        self._pause_chip = PauseChip((0, _sx(88)))
+        self._pause_chip.rect.right = WIDTH - _sx(32)
+        self._pause_chip.rect.top = _sx(88)
+        pad = max(1, int(24 * SCALE))
+        self._pause_chip.hit_rect = self._pause_chip.rect.inflate(pad, pad)
         self._pause_menu = PauseMenu()
+        self.ui_consumed_touch = False
         self._paused = False
         self._pause_cooldown = 0.0
-        self._pause_nav_cooldown = 0.0
+        self._pause_nav_stick_neutral = True
         self._pending_pause_action: Optional[str] = None
         self._end_choice = 0  # 0=Play again, 1=Title
         self._end_choice_cooldown = 0.0
@@ -643,7 +647,7 @@ class BoothBlaster:
         self._paused = True
         self._pause_menu.choice = 0
         self._pause_cooldown = 0.2
-        self._pause_nav_cooldown = 0.2
+        self._pause_nav_stick_neutral = False
         self._block_fire = True
         audio.play("ui_confirm")
         audio.pause_gameplay_music()
@@ -856,7 +860,9 @@ class BoothBlaster:
             if event.key == pygame.K_m:
                 audio.toggle_mute()
                 audio.play("ui_blip")
-            elif event.key in (pygame.K_t, pygame.K_ESCAPE) and not self._entering_score and not self.game_over:
+            elif event.key == pygame.K_t and not self._entering_score and not self.game_over:
+                self._pending_pause_action = PauseMenu.TITLE
+            elif event.key == pygame.K_ESCAPE and not self._entering_score and not self.game_over:
                 if self._paused and self._pause_cooldown <= 0:
                     self._close_pause()
                 elif not self._paused:
@@ -864,8 +870,8 @@ class BoothBlaster:
 
         pos: Optional[tuple[int, int]] = None
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-            if getattr(event, "touch", False):
-                return
+            # Accept touch-flagged mouse too. Skipping it made TITLE/PAUSE feel
+            # like a hold on Android (tap never landed; only a long press did).
             lx, ly = window_to_logical(*event.pos)
             pos = (int(lx), int(ly))
         elif event.type == pygame.FINGERDOWN:
@@ -881,12 +887,14 @@ class BoothBlaster:
                 self._pending_end_confirm = True
                 self.idle_timer = 0.0
                 self._block_fire = True
+                self.ui_consumed_touch = True
                 return
             if title_r.collidepoint(pos):
                 self._end_choice = 1
                 self._pending_end_confirm = True
                 self.idle_timer = 0.0
                 self._block_fire = True
+                self.ui_consumed_touch = True
                 return
 
         if self._entering_score and self._initials_picker is not None:
@@ -899,6 +907,7 @@ class BoothBlaster:
             if consumed:
                 self.idle_timer = 0.0
                 self._block_fire = True
+                self.ui_consumed_touch = True
                 # Cover confirm_pressed from the same tap (and delayed mouse twin).
                 self._initials_block_confirm = 0.35
                 self._initials_stick_neutral = False
@@ -907,6 +916,7 @@ class BoothBlaster:
         if self._mute_chip.handle_click(pos):
             self.idle_timer = 0.0
             self._block_fire = True
+            self.ui_consumed_touch = True
             return
 
         if self._paused:
@@ -915,11 +925,13 @@ class BoothBlaster:
                 self._pending_pause_action = action
                 self.idle_timer = 0.0
                 self._block_fire = True
+                self.ui_consumed_touch = True
             return
 
         if not self.game_over and self._pause_chip.handle_click(pos):
             self.idle_timer = 0.0
             self._block_fire = True
+            self.ui_consumed_touch = True
             self._open_pause()
 
     def update(self, dt: float, inp: InputState) -> Optional[object]:
@@ -998,13 +1010,18 @@ class BoothBlaster:
 
         if self._paused:
             self._pause_cooldown = max(0.0, self._pause_cooldown - dt)
-            self._pause_nav_cooldown = max(0.0, self._pause_nav_cooldown - dt)
-            if self._pause_cooldown <= 0:
-                if abs(inp.move_y) > 0.4 and self._pause_nav_cooldown <= 0:
-                    self._pause_menu.move(1 if inp.move_y > 0 else -1)
-                    self._pause_nav_cooldown = 0.2
-                if inp.confirm_pressed:
-                    return self._apply_pause_action(self._pause_menu.confirm())
+            dead = 0.4
+            if abs(inp.move_y) <= dead:
+                self._pause_nav_stick_neutral = True
+            elif (
+                self._pause_cooldown <= 0
+                and self._pause_nav_stick_neutral
+                and abs(inp.move_y) > dead
+            ):
+                self._pause_menu.move(1 if inp.move_y > 0 else -1)
+                self._pause_nav_stick_neutral = False
+            if self._pause_cooldown <= 0 and inp.confirm_pressed:
+                return self._apply_pause_action(self._pause_menu.confirm())
             return self
 
         freeze_idle = self._entering_score or self.victory_timer > 0

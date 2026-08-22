@@ -13,8 +13,17 @@ from config import (
     PAD_FIRE_BUTTONS,
     PAD_SELECT_BUTTONS,
     PAD_START_BUTTONS,
+    SCALE,
     WIDTH,
 )
+
+# MUTE/PAUSE live in this band. A tap there must not steer Dobby.
+HUD_STEER_MIN_Y = max(1, int(220 * SCALE))
+
+
+def pointer_steers_aim(ly: float) -> bool:
+    """True when a touch Y is in the play field (below HUD chrome)."""
+    return ly >= HUD_STEER_MIN_Y
 
 # Common DualShock / XInput-style button indices (kept for readability / docs).
 BTN_CROSS = 0  # A / Cross — fire / confirm
@@ -213,6 +222,11 @@ class InputManager:
             self._pointers.pop(-1, None)
             return
 
+    def discard_pointers(self) -> None:
+        """Drop play pointers after a HUD/menu tap so the same finger does not steer."""
+        self._pointers.clear()
+        self._touch_confirm_edge = False
+
     def poll(self, dt: float) -> InputState:
         keys = pygame.key.get_pressed()
         move_x = 0.0
@@ -303,17 +317,16 @@ class InputManager:
                     activity = True
                     break
 
-        # Touch / mouse pointers — drag to steer, hold to auto-fire (full width).
+        # Touch / mouse — drag to steer in the play field only. HUD chrome never aims.
         if self._pointers:
             activity = True
-            # Always steer to finger X (leftmost if multi-touch). Do not reserve a
-            # right-side "fire zone" that drops aim_x and caps movement short of the edge.
-            xs = [lx for lx, _ly in self._pointers.values()]
-            aim_x = min(xs)
-            fire_held = True
-            if self._touch_confirm_edge:
-                confirm_raw = True
+            play_xs = [lx for lx, ly in self._pointers.values() if pointer_steers_aim(ly)]
+            if play_xs:
+                aim_x = min(play_xs)
                 fire_held = True
+                if self._touch_confirm_edge:
+                    confirm_raw = True
+                    fire_held = True
 
         self._touch_confirm_edge = False
 
